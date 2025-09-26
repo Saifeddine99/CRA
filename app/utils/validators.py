@@ -1,5 +1,5 @@
 from datetime import datetime
-from app.models import ActivityType, InternalActivityType, AbsenceType, WorkLocation
+from app.models import ActivityType, InternalActivityType, AbsenceType, ProjectActivityType
 
 def validate_required_fields(data, required_fields):
     """Validate that required fields are present in data"""
@@ -54,13 +54,13 @@ def validate_absence_type(absence_type_str):
     except ValueError:
         return False, "Invalid absence type"
 
-def validate_work_location(work_location_str):
-    """Validate work location enum"""
+def validate_project_activity_type(project_activity_type_str):
+    """Validate project activity type enum"""
     try:
-        work_location = WorkLocation(work_location_str)
-        return True, work_location
+        project_activity_type = ProjectActivityType(project_activity_type_str)
+        return True, project_activity_type
     except ValueError:
-        return False, "Invalid work location"
+        return False, "Invalid project activity type"
 
 def validate_year_month(year, month):
     """Validate year and month are within reasonable ranges"""

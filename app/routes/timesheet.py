@@ -3,7 +3,7 @@ from datetime import datetime, date
 import calendar
 from app.extensions import db
 from app.models import (Consultant, Project, ProjectAssignment, TimesheetEntry,
-                       ActivityType, InternalActivityType, AbsenceType, WorkLocation)
+                       ActivityType, InternalActivityType, AbsenceType, ProjectActivityType)
 
 timesheet_bp = Blueprint('timesheet', __name__)
 
@@ -59,8 +59,8 @@ def create_timesheet_entry():
     }
     
     if activity_type == ActivityType.PROJECT:
-        if not data.get('project_id') or not data.get('work_location'):
-            return jsonify({'error': 'project_id and work_location are required for project activities'}), 400
+        if not data.get('project_id') or not data.get('projectActivityType'):
+            return jsonify({'error': 'project_id and projectActivityType are required for project activities'}), 400
         
         # Validate project exists and consultant is assigned
         project = Project.query.get_or_404(data['project_id'])
@@ -74,12 +74,12 @@ def create_timesheet_entry():
             return jsonify({'error': 'Consultant is not assigned to this project'}), 400
         
         try:
-            work_location = WorkLocation(data['work_location'])
+            project_activity_type = ProjectActivityType(data['projectActivityType'])
         except ValueError:
-            return jsonify({'error': 'Invalid work location'}), 400
+            return jsonify({'error': 'Invalid project activity type'}), 400
         
         entry_data['project_id'] = data['project_id']
-        entry_data['work_location'] = work_location
+        entry_data['project_activity_type'] = project_activity_type
     
     elif activity_type == ActivityType.INTERNAL:
         if not data.get('internal_activity_type'):
@@ -123,7 +123,7 @@ def create_timesheet_entry():
                 'project_id': entry.project_id,
                 'project_name': entry.project.name,
                 'client_company': entry.project.client_company,
-                'work_location': entry.work_location.value
+                'projectActivityType': entry.project_activity_type.value
             })
         elif entry.activity_type == ActivityType.INTERNAL:
             response_data['internal_activity_type'] = entry.internal_activity_type.value
@@ -182,7 +182,7 @@ def get_monthly_timesheet(consultant_id, year, month):
                 'project_id': entry.project_id,
                 'project_name': entry.project.name,
                 'client_company': entry.project.client_company,
-                'work_location': entry.work_location.value
+                'projectActivityType': entry.project_activity_type.value
             })
             total_project_time += entry.time_fraction
         elif entry.activity_type == ActivityType.INTERNAL:
@@ -249,21 +249,27 @@ def get_monthly_summary(consultant_id, year, month):
                     'represented_by': entry.project.represented_by,
                     'supervisor_email': entry.project.supervisor_email,
                     'total_time': 0,
-                    'remote_time': 0,
-                    'on_site_time': 0,
-                    'hybrid_time': 0,
+                    'normale_time': 0,
+                    'astreinte_semaine_time': 0,
+                    'astreinte_samedi_time': 0,
+                    'astreinte_dimanche_time': 0,
+                    'astreinte_jours_feries_time': 0,
                     'days_worked': set()
                 }
             
             projects_summary[project_id]['total_time'] += entry.time_fraction
             projects_summary[project_id]['days_worked'].add(entry.work_date)
             
-            if entry.work_location == WorkLocation.REMOTE:
-                projects_summary[project_id]['remote_time'] += entry.time_fraction
-            elif entry.work_location == WorkLocation.ON_SITE:
-                projects_summary[project_id]['on_site_time'] += entry.time_fraction
-            elif entry.work_location == WorkLocation.HYBRID:
-                projects_summary[project_id]['hybrid_time'] += entry.time_fraction
+            if entry.project_activity_type == ProjectActivityType.NORMALE:
+                projects_summary[project_id]['normale_time'] += entry.time_fraction
+            elif entry.project_activity_type == ProjectActivityType.ASTREINTE_CALENDAIRE_SEMAINE:
+                projects_summary[project_id]['astreinte_semaine_time'] += entry.time_fraction
+            elif entry.project_activity_type == ProjectActivityType.ASTREINTE_CALENDAIRE_SAMEDI:
+                projects_summary[project_id]['astreinte_samedi_time'] += entry.time_fraction
+            elif entry.project_activity_type == ProjectActivityType.ASTREINTE_CALENDAIRE_DIMANCHE:
+                projects_summary[project_id]['astreinte_dimanche_time'] += entry.time_fraction
+            elif entry.project_activity_type == ProjectActivityType.ASTREINTE_CALENDAIRE_JOURS_FERIES:
+                projects_summary[project_id]['astreinte_jours_feries_time'] += entry.time_fraction
         
         elif entry.activity_type == ActivityType.INTERNAL:
             activity_type = entry.internal_activity_type.value

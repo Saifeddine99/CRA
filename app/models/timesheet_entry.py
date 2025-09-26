@@ -1,6 +1,6 @@
 from datetime import datetime
 from app.extensions import db
-from app.models.enums import ActivityType, InternalActivityType, AbsenceType, WorkLocation
+from app.models.enums import ActivityType, InternalActivityType, AbsenceType, ProjectActivityType
 
 class TimesheetEntry(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -16,7 +16,7 @@ class TimesheetEntry(db.Model):
     
     # Project-specific fields (only for PROJECT activity type)
     project_id = db.Column(db.Integer, db.ForeignKey('project.id'), nullable=True)
-    work_location = db.Column(db.Enum(WorkLocation), nullable=True)
+    project_activity_type = db.Column(db.Enum(ProjectActivityType), nullable=True)
     
     # Internal activity fields (only for INTERNAL activity type)
     internal_activity_type = db.Column(db.Enum(InternalActivityType), nullable=True)

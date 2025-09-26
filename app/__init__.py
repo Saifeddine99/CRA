@@ -17,7 +17,7 @@ def create_app(config_name='default'):
     # Import models to ensure they're registered with SQLAlchemy
     from app.models import (
         Consultant, Project, ProjectAssignment, TimesheetEntry,
-        ActivityType, InternalActivityType, AbsenceType, WorkLocation
+        ActivityType, InternalActivityType, AbsenceType, ProjectActivityType
     )
     
     # Register blueprints
