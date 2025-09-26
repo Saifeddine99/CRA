@@ -71,3 +71,11 @@ def validate_year_month(year, month):
         return False, "Year must be between 2020 and 2030"
     
     return True, ""
+
+def validate_email_format(email):
+    """Basic email format validation"""
+    import re
+    email_pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}
+    if re.match(email_pattern, email):
+        return True, ""
+    return False, "Invalid email format"

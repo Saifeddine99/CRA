@@ -24,3 +24,18 @@ class ProjectActivityType(Enum):
     ASTREINTE_CALENDAIRE_SAMEDI = "Astreinte Calendaire Samedi"
     ASTREINTE_CALENDAIRE_DIMANCHE = "Astreinte Calendaire Dimanche"
     ASTREINTE_CALENDAIRE_JOURS_FERIES = "Astreinte Calendaire Jours Fériés"
+
+class AbsenceRequestType(Enum):
+    CP = "CP"
+    RTT = "RTT"
+    CONGES_SANS_SOLDE = "Congés Sans Solde"
+    MALADIE = "Maladie"
+    EXCEPTIONNELLE = "Exceptionnelle"
+    PATERNITE = "Paternité"
+    MATERNITE = "Maternité"
+
+class AbsenceRequestStatus(Enum):
+    PENDING = "pending"
+    ACCEPTED = "accepted"
+    REFUSED = "refused"
+    PARTIALLY_ACCEPTED = "partially_accepted"

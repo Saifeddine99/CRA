@@ -16,20 +16,22 @@ def create_app(config_name='default'):
     
     # Import models to ensure they're registered with SQLAlchemy
     from app.models import (
-        Consultant, Project, ProjectAssignment, TimesheetEntry,
-        ActivityType, InternalActivityType, AbsenceType, ProjectActivityType
+        Consultant, Project, ProjectAssignment, TimesheetEntry, AbsenceRequest, AbsenceRequestDay,
+        ActivityType, InternalActivityType, AbsenceType, ProjectActivityType,
+        AbsenceRequestType, AbsenceRequestStatus
     )
     
     # Register blueprints
     from app.routes import (
         consultants_bp, projects_bp, project_assignments_bp,
-        timesheet_bp, utils_bp
+        timesheet_bp, absence_requests_bp, utils_bp
     )
     
     app.register_blueprint(consultants_bp)
     app.register_blueprint(projects_bp)
     app.register_blueprint(project_assignments_bp)
     app.register_blueprint(timesheet_bp)
+    app.register_blueprint(absence_requests_bp)
     app.register_blueprint(utils_bp)
     
     # Error handlers
