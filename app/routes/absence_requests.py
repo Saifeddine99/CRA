@@ -321,6 +321,43 @@ def get_all_absence_requests():
     
     return jsonify(result)
 
+@absence_requests_bp.route('/api/consultants/<int:consultant_id>/absence-requests/<int:year>', methods=['GET'])
+def get_consultant_absence_requests(consultant_id, year):
+    """Get all absence requests for a specific consultant and year"""
+    consultant = Consultant.query.get_or_404(consultant_id)
+    
+    if year < 2020 or year > 2030:
+        return jsonify({'error': 'Invalid year'}), 400
+    
+    # Get all absence requests for the consultant that have days in the specified year
+    absence_requests = db.session.query(AbsenceRequest).filter(
+        AbsenceRequest.consultant_id == consultant_id,
+        db.exists().where(
+            db.and_(
+                AbsenceRequestDay.absence_request_id == AbsenceRequest.id,
+                db.func.strftime('%Y', AbsenceRequestDay.absence_date) == str(year)
+            )
+        )
+    ).order_by(AbsenceRequest.created_at.desc()).all()
+    
+    result = []
+    for request in absence_requests:
+        # Calculate total days for this request in the specified year
+        total_days = sum(
+            day.time_fraction for day in request.absence_days 
+            if day.absence_date.year == year
+        )
+        
+        result.append({
+            'absence_type': request.absence_type.value,
+            'created_at': request.created_at.date().isoformat(),
+            'request_id': request.id,
+            'status': request.status.value,
+            'total_days': total_days
+        })
+    
+    return jsonify(result)
+
 @absence_requests_bp.route('/api/absence-requests/<int:request_id>/review', methods=['PUT'])
 def review_absence_request(request_id):
     """HR team review absence request (accept/refuse individual days)"""

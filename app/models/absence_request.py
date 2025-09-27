@@ -19,6 +19,7 @@ class AbsenceRequest(db.Model):
     hr_comments = db.Column(db.Text, nullable=True)
     
     # Relationships
+    consultant = db.relationship('Consultant', backref=db.backref('absence_requests', lazy=True))
     absence_days = db.relationship('AbsenceRequestDay', backref='absence_request', lazy=True, cascade='all, delete-orphan')
 
 class AbsenceRequestDay(db.Model):
