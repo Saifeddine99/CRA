@@ -80,9 +80,11 @@ def create_absence_request():
             db.func.strftime('%Y', AbsenceRequestDay.absence_date) == str(current_year)
         ).scalar() or 0
         
+        total_remaining_days = max(0, 25 - existing_days)
+        
         if existing_days + total_days_requested > 25:
             return jsonify({
-                'error': f'Annual absence limit exceeded. Current: {existing_days} days, requesting: {total_days_requested} days. Maximum: 25 days per year (excluding Congés Sans Solde)'
+                'error': f'Annual absence limit exceeded. Remaining days available: {total_remaining_days}. You are requesting: {total_days_requested} days'
             }), 400
     
     # Create the absence request
@@ -150,25 +152,20 @@ def get_absence_summary(consultant_id, year):
     accepted_days = 0
     pending_days = 0
     refused_days = 0
-    conges_sans_solde_days = 0
     
     by_type = {}
     
     for request in absence_requests:
         for day in request.absence_days:
             if day.absence_date.year == year:
-                # Count by status
-                if day.status == AbsenceRequestStatus.ACCEPTED:
-                    accepted_days += day.time_fraction
-                elif day.status == AbsenceRequestStatus.PENDING:
-                    pending_days += day.time_fraction
-                elif day.status == AbsenceRequestStatus.REFUSED:
-                    refused_days += day.time_fraction
-                
-                # Count Congés Sans Solde separately
-                if request.absence_type == AbsenceRequestType.CONGES_SANS_SOLDE:
-                    if day.status in [AbsenceRequestStatus.ACCEPTED, AbsenceRequestStatus.PENDING]:
-                        conges_sans_solde_days += day.time_fraction
+                # Count by status (excluding Congés Sans Solde)
+                if request.absence_type != AbsenceRequestType.CONGES_SANS_SOLDE:
+                    if day.status == AbsenceRequestStatus.ACCEPTED:
+                        accepted_days += day.time_fraction
+                    elif day.status == AbsenceRequestStatus.PENDING:
+                        pending_days += day.time_fraction
+                    elif day.status == AbsenceRequestStatus.REFUSED:
+                        refused_days += day.time_fraction
                 
                 # Count by type
                 type_key = request.absence_type.value
@@ -183,7 +180,7 @@ def get_absence_summary(consultant_id, year):
                     by_type[type_key]['refused'] += day.time_fraction
     
     # Calculate remaining days (excluding Congés Sans Solde)
-    used_days = accepted_days + pending_days - conges_sans_solde_days
+    used_days = accepted_days + pending_days
     remaining_days = max(0, 25 - used_days)
     
     return jsonify({
