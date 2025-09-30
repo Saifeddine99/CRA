@@ -1,8 +1,8 @@
 from flask import Blueprint, request, jsonify
 from datetime import datetime, date
 from app.extensions import db
-from app.models import (Consultant, AbsenceRequest, AbsenceRequestDay, TimesheetEntry,
-                       AbsenceRequestType, AbsenceRequestStatus, ActivityType)
+from app.models import (Consultant, AbsenceRequest, AbsenceRequestDay,
+                       AbsenceRequestType, AbsenceRequestStatus)
 
 absence_requests_bp = Blueprint('absence_requests', __name__)
 
@@ -356,6 +356,118 @@ def get_consultant_absence_requests(consultant_id, year):
     
     return jsonify(result)
 
+@absence_requests_bp.route('/api/absence-requests/<int:request_id>', methods=['PUT'])
+def update_absence_request(request_id):
+    """Update a pending absence request (type, commentary/justification, and days). Only pending requests can be updated."""
+    data = request.get_json()
+
+    if not data:
+        return jsonify({'error': 'Request body is required'}), 400
+
+    # Fetch request
+    absence_request = AbsenceRequest.query.get_or_404(request_id)
+
+    # Only pending requests can be updated
+    if absence_request.status != AbsenceRequestStatus.PENDING:
+        return jsonify({'error': 'Only pending requests can be updated'}), 400
+
+    # Optional fields
+    new_commentary = data.get('commentary', absence_request.commentary)
+    new_justification = data.get('justification', absence_request.justification)
+
+    # Absence type can be updated; default to current if not provided
+    absence_type_value = data.get('absence_type', absence_request.absence_type.value)
+    try:
+        new_absence_type = AbsenceRequestType(absence_type_value)
+    except ValueError:
+        return jsonify({'error': 'Invalid absence type'}), 400
+
+    # Days can be updated by providing full replacement list under `days`
+    days_payload = data.get('days')
+    parsed_days = None
+    if days_payload is not None:
+        if not isinstance(days_payload, list) or len(days_payload) == 0:
+            return jsonify({'error': 'days must be a non-empty list'}), 400
+        # Parse
+        parsed_days = []
+        for day_data in days_payload:
+            if not isinstance(day_data, dict) or 'date' not in day_data or 'time_fraction' not in day_data:
+                return jsonify({'error': 'Each day must have date and time_fraction'}), 400
+            try:
+                absence_date = datetime.strptime(day_data['date'], '%Y-%m-%d').date()
+            except ValueError:
+                return jsonify({'error': 'Invalid date format. Use YYYY-MM-DD'}), 400
+            time_fraction = day_data['time_fraction']
+            if time_fraction not in [0.5, 1.0]:
+                return jsonify({'error': 'time_fraction must be 0.5 or 1.0'}), 400
+            parsed_days.append({'date': absence_date, 'time_fraction': time_fraction})
+
+        # Validate conflicts against other requests for the same consultant
+        existing_conflicts = []
+        for day in parsed_days:
+            conflict = db.session.query(AbsenceRequestDay).join(AbsenceRequest).filter(
+                AbsenceRequest.consultant_id == absence_request.consultant_id,
+                AbsenceRequestDay.absence_date == day['date'],
+                AbsenceRequestDay.status.in_([AbsenceRequestStatus.PENDING, AbsenceRequestStatus.ACCEPTED]),
+                AbsenceRequestDay.absence_request_id != absence_request.id
+            ).first()
+            if conflict:
+                existing_conflicts.append(day['date'].isoformat())
+        if existing_conflicts:
+            return jsonify({'error': f'Consultant already has absence requests for these dates: {", ".join(existing_conflicts)}'}), 400
+
+        # Validate annual limit (excluding Congés Sans Solde)
+        if new_absence_type != AbsenceRequestType.CONGES_SANS_SOLDE:
+            current_year = datetime.now().year
+            total_days_requested = sum(day['time_fraction'] for day in parsed_days)
+            existing_days = db.session.query(db.func.sum(AbsenceRequestDay.time_fraction)).join(AbsenceRequest).filter(
+                AbsenceRequest.consultant_id == absence_request.consultant_id,
+                AbsenceRequest.absence_type != AbsenceRequestType.CONGES_SANS_SOLDE,
+                AbsenceRequestDay.status.in_([AbsenceRequestStatus.ACCEPTED, AbsenceRequestStatus.PENDING]),
+                db.func.strftime('%Y', AbsenceRequestDay.absence_date) == str(current_year),
+                AbsenceRequestDay.absence_request_id != absence_request.id
+            ).scalar() or 0
+            if existing_days + total_days_requested > 25:
+                remaining_days = max(0, 25 - existing_days)
+                return jsonify({'error': f'Annual absence limit exceeded. Remaining days available: {remaining_days}. You are requesting: {total_days_requested} days'}), 400
+
+    try:
+        # Apply simple field updates
+        absence_request.absence_type = new_absence_type
+        absence_request.commentary = new_commentary
+        absence_request.justification = new_justification
+
+        # If days provided, replace existing days for this request
+        if parsed_days is not None:
+            # Delete existing days
+            AbsenceRequestDay.query.filter_by(absence_request_id=absence_request.id).delete()
+            # Insert new days
+            for day in parsed_days:
+                db.session.add(AbsenceRequestDay(
+                    absence_request_id=absence_request.id,
+                    absence_date=day['date'],
+                    time_fraction=day['time_fraction']
+                ))
+
+        db.session.commit()
+
+        # Build response
+        return jsonify({
+            'id': absence_request.id,
+            'request_reference': absence_request.request_reference,
+            'absence_type': absence_request.absence_type.value,
+            'status': absence_request.status.value,
+            'commentary': absence_request.commentary,
+            'justification': absence_request.justification,
+            'days': [{
+                'date': d.absence_date.isoformat(),
+                'time_fraction': d.time_fraction
+            } for d in absence_request.absence_days]
+        })
+    except Exception:
+        db.session.rollback()
+        return jsonify({'error': 'Failed to update absence request'}), 500
+
 @absence_requests_bp.route('/api/absence-requests/<int:request_id>/review', methods=['PUT'])
 def review_absence_request(request_id):
     """HR team review absence request (accept/refuse individual days)"""
@@ -437,3 +549,19 @@ def review_absence_request(request_id):
     except Exception as e:
         db.session.rollback()
         return jsonify({'error': 'Failed to review absence request'}), 500
+
+@absence_requests_bp.route('/api/absence-requests/<int:request_id>', methods=['DELETE'])
+def delete_absence_request(request_id):
+    """Delete an absence request only if it's pending. Child days are removed via cascade delete-orphan."""
+    absence_request = AbsenceRequest.query.get_or_404(request_id)
+
+    if absence_request.status != AbsenceRequestStatus.PENDING:
+        return jsonify({'error': 'Only pending requests can be deleted'}), 400
+
+    try:
+        db.session.delete(absence_request)
+        db.session.commit()
+        return jsonify({'message': 'Absence request deleted successfully', 'id': request_id}), 200
+    except Exception:
+        db.session.rollback()
+        return jsonify({'error': 'Failed to delete absence request'}), 500
