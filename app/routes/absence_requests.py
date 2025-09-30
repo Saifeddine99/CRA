@@ -222,17 +222,18 @@ def get_monthly_absences(consultant_id, year, month):
         AbsenceRequestDay.status.in_([AbsenceRequestStatus.ACCEPTED, AbsenceRequestStatus.PENDING])
     ).order_by(AbsenceRequestDay.absence_date).all()
     
-    absences = []
+    # Group by absence type
+    absences_by_type = {}
     for day, request in absence_days:
-        absences.append({
-            'id': day.id,
-            'request_reference': request.request_reference,
-            'absence_date': day.absence_date.isoformat(),
-            'absence_type': request.absence_type.value,
-            'time_fraction': day.time_fraction,
+        absence_type = request.absence_type.value
+        
+        if absence_type not in absences_by_type:
+            absences_by_type[absence_type] = []
+        
+        absences_by_type[absence_type].append({
+            'work_date': day.absence_date.isoformat(),
             'status': day.status.value,
-            'commentary': request.commentary,
-            'justification': request.justification
+            'time_fraction': day.time_fraction
         })
     
     return jsonify({
@@ -245,7 +246,7 @@ def get_monthly_absences(consultant_id, year, month):
             'year': year,
             'month': month
         },
-        'absences': absences
+        'absences': absences_by_type
     })
 
 @absence_requests_bp.route('/api/absence-requests/<int:request_id>', methods=['GET'])
@@ -367,8 +368,8 @@ def review_absence_request(request_id):
     
     absence_request = AbsenceRequest.query.get_or_404(request_id)
     
-    if absence_request.status != AbsenceRequestStatus.PENDING:
-        return jsonify({'error': 'Only pending requests can be reviewed'}), 400
+    #if absence_request.status != AbsenceRequestStatus.PENDING:
+        #return jsonify({'error': 'Only pending requests can be reviewed'}), 400
     
     # Validate day decisions
     day_decisions = data['day_decisions']

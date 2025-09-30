@@ -324,6 +324,105 @@ def get_monthly_summary(consultant_id, year, month):
         }
     })
 
+@timesheet_bp.route('/api/timesheets/<int:year>/<int:month>', methods=['GET'])
+def get_all_timesheets(year, month):
+    """Get all consultants' timesheets for a specific month (for HR portal)"""
+    # Validate month and year
+    if not (1 <= month <= 12) or year < 2020 or year > 2030:
+        return jsonify({'error': 'Invalid month or year'}), 400
+    
+    # Optional consultant filter
+    consultant_id = request.args.get('consultant_id', type=int)
+    
+    # Get consultants
+    if consultant_id:
+        consultants = Consultant.query.filter_by(id=consultant_id).all()
+        if not consultants:
+            return jsonify({'error': 'Consultant not found'}), 404
+    else:
+        consultants = Consultant.query.all()
+    
+    # Get first and last day of month
+    first_day = date(year, month, 1)
+    last_day = date(year, month, calendar.monthrange(year, month)[1])
+    
+    # Build result for all consultants
+    result = []
+    
+    for consultant in consultants:
+        # Query timesheet entries for this consultant
+        entries = TimesheetEntry.query.filter(
+            TimesheetEntry.consultant_id == consultant.id,
+            TimesheetEntry.work_date >= first_day,
+            TimesheetEntry.work_date <= last_day
+        ).order_by(TimesheetEntry.work_date).all()
+        
+        daily_entries = {}
+        summary = {
+            'total_project_time': 0,
+            'total_internal_time': 0,
+            'total_absence_time': 0,
+            'total_working_days': 0
+        }
+        
+        # Process entries if they exist
+        for entry in entries:
+            date_str = entry.work_date.isoformat()
+            if date_str not in daily_entries:
+                daily_entries[date_str] = {
+                    'date': date_str,
+                    'activities': [],
+                    'total_time': 0
+                }
+            
+            activity_data = {
+                'id': entry.id,
+                'activity_type': entry.activity_type.value,
+                'time_fraction': entry.time_fraction,
+                'description': entry.description
+            }
+            
+            if entry.activity_type == ActivityType.PROJECT:
+                activity_data.update({
+                    'project_id': entry.project_id,
+                    'project_name': entry.project.name,
+                    'client_company': entry.project.client_company,
+                    'projectActivityType': entry.project_activity_type.value
+                })
+                summary['total_project_time'] += entry.time_fraction
+            elif entry.activity_type == ActivityType.INTERNAL:
+                activity_data['internal_activity_type'] = entry.internal_activity_type.value
+                summary['total_internal_time'] += entry.time_fraction
+            elif entry.activity_type == ActivityType.ABSENCE:
+                activity_data['absence_type'] = entry.absence_type.value
+                summary['total_absence_time'] += entry.time_fraction
+            
+            daily_entries[date_str]['activities'].append(activity_data)
+            daily_entries[date_str]['total_time'] += entry.time_fraction
+        
+        # Calculate working days
+        summary['total_working_days'] = len([d for d in daily_entries.values() if d['total_time'] > 0])
+        
+        result.append({
+            'consultant': {
+                'id': consultant.id,
+                'name': consultant.name,
+                'email': consultant.email
+            },
+            'daily_entries': list(daily_entries.values()),
+            'summary': summary
+        })
+    
+    return jsonify({
+        'period': {
+            'year': year,
+            'month': month,
+            'month_name': calendar.month_name[month]
+        },
+        'total_consultants': len(result),
+        'timesheets': result
+    })
+
 @timesheet_bp.route('/api/consultants/<int:consultant_id>/daily-validation/<work_date>', methods=['GET'])
 def validate_daily_time(consultant_id, work_date):
     """Check current time allocation for a specific day"""

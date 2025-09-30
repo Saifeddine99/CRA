@@ -1,6 +1,6 @@
 from datetime import datetime
 from app.extensions import db
-from app.models.enums import ActivityType, InternalActivityType, AbsenceType, ProjectActivityType
+from app.models.enums import ActivityType, InternalActivityType, AbsenceRequestType, ProjectActivityType
 
 class TimesheetEntry(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -22,4 +22,4 @@ class TimesheetEntry(db.Model):
     internal_activity_type = db.Column(db.Enum(InternalActivityType), nullable=True)
     
     # Absence fields (only for ABSENCE activity type)
-    absence_type = db.Column(db.Enum(AbsenceType), nullable=True)
+    absence_type = db.Column(db.Enum(AbsenceRequestType), nullable=True)

@@ -1,5 +1,5 @@
 from datetime import datetime
-from app.models import ActivityType, InternalActivityType, AbsenceType, ProjectActivityType
+from app.models import ActivityType, InternalActivityType, AbsenceRequestType, ProjectActivityType
 
 def validate_required_fields(data, required_fields):
     """Validate that required fields are present in data"""
@@ -49,7 +49,7 @@ def validate_internal_activity_type(internal_type_str):
 def validate_absence_type(absence_type_str):
     """Validate absence type enum"""
     try:
-        absence_type = AbsenceType(absence_type_str)
+        absence_type = AbsenceRequestType(absence_type_str)
         return True, absence_type
     except ValueError:
         return False, "Invalid absence type"
@@ -75,7 +75,7 @@ def validate_year_month(year, month):
 def validate_email_format(email):
     """Basic email format validation"""
     import re
-    email_pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}
+    email_pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
     if re.match(email_pattern, email):
         return True, ""
     return False, "Invalid email format"
