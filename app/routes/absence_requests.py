@@ -204,7 +204,21 @@ def create_absence_request():
                             status='pending'
                         )
                         db.session.add(absence_entry)
-        
+                else:
+                    # Day is empty but timesheet exists for the month
+                    # Create the absence entry directly
+                    absence_entry = TimesheetEntry(
+                        consultant_id=absence_request.consultant_id,
+                        work_date=absence_date,
+                        activity_type=ActivityType.ABSENCE,
+                        time_fraction=absence_time_fraction,
+                        absence_type=absence_type,
+                        absence_request_id=absence_request.id,
+                        description=f"Absence: {absence_type.value}",
+                        status='pending'
+                    )
+                    db.session.add(absence_entry)
+                    
         # Update status of all records in affected months to 'pending'
         for year, month in affected_months:
             first_day = date(year, month, 1)
@@ -554,6 +568,8 @@ def update_absence_request(request_id):
         if parsed_days is not None:
             # Delete existing days
             AbsenceRequestDay.query.filter_by(absence_request_id=absence_request.id).delete()
+            # Delete related timesheet entries
+            TimesheetEntry.query.filter_by(absence_request_id=absence_request.id).delete()
             # Insert new days
             for day in parsed_days:
                 db.session.add(AbsenceRequestDay(
@@ -561,6 +577,128 @@ def update_absence_request(request_id):
                     absence_date=day['date'],
                     time_fraction=day['time_fraction']
                 ))
+            
+            # Process timesheet updates for each new absence day
+            affected_months = set()
+            
+            for day in parsed_days:
+                absence_date = day['date']
+                absence_time_fraction = day['time_fraction']
+                
+                # Get first and last day of the month containing this absence date
+                first_day = date(absence_date.year, absence_date.month, 1)
+                last_day = date(absence_date.year, absence_date.month, calendar.monthrange(absence_date.year, absence_date.month)[1])
+                
+                # Check if timesheet is submitted for this month
+                submitted_entries = TimesheetEntry.query.filter(
+                    TimesheetEntry.consultant_id == absence_request.consultant_id,
+                    TimesheetEntry.work_date >= first_day,
+                    TimesheetEntry.work_date <= last_day
+                ).first()
+                
+                if submitted_entries:
+                    # Timesheet is submitted, need to update it
+                    affected_months.add((absence_date.year, absence_date.month))
+                    
+                    # Get all timesheet entries for this specific date
+                    daily_entries = TimesheetEntry.query.filter(
+                        TimesheetEntry.consultant_id == absence_request.consultant_id,
+                        TimesheetEntry.work_date == absence_date,
+                        TimesheetEntry.activity_type != ActivityType.ABSENCE
+                    ).order_by(TimesheetEntry.id).all()
+                    
+                    if daily_entries:
+                        if absence_time_fraction == 1.0:
+                            # Full day absence - remove all activities and replace with absence
+                            for entry in daily_entries:
+                                db.session.delete(entry)
+                            
+                            # Create new absence entry
+                            absence_entry = TimesheetEntry(
+                                consultant_id=absence_request.consultant_id,
+                                work_date=absence_date,
+                                activity_type=ActivityType.ABSENCE,
+                                time_fraction=1.0,
+                                absence_type=new_absence_type,
+                                absence_request_id=absence_request.id,
+                                description=f"Absence: {new_absence_type.value}",
+                                status='pending'
+                            )
+                            db.session.add(absence_entry)
+                            
+                        elif absence_time_fraction == 0.5:
+                            # Half day absence
+                            total_existing_time = sum(entry.time_fraction for entry in daily_entries)
+                            
+                            if total_existing_time == 1.0:
+                                # User has full day activities, need to adjust
+                                if len(daily_entries) == 1:
+                                    # Single activity of 1.0, convert to 0.5
+                                    daily_entries[0].time_fraction = 0.5
+                                else:
+                                    # Multiple activities, remove the last one and adjust if needed
+                                    last_entry = daily_entries[-1]
+                                    db.session.delete(last_entry)
+                                    
+                                    # Check if remaining activities sum to 0.5
+                                    remaining_time = sum(entry.time_fraction for entry in daily_entries[:-1])
+                                    if remaining_time > 0.5:
+                                        # Adjust the first entry to make room for absence
+                                        daily_entries[0].time_fraction = 0.5
+                                        # Remove other entries if necessary
+                                        for entry in daily_entries[1:-1]:
+                                            db.session.delete(entry)
+                            
+                            elif total_existing_time == 0.5:
+                                # Already half day, keep as is
+                                pass
+                            else:
+                                # Other cases, adjust first entry to 0.5 and remove others
+                                if daily_entries:
+                                    daily_entries[0].time_fraction = 0.5
+                                    for entry in daily_entries[1:]:
+                                        db.session.delete(entry)
+                            
+                            # Create absence entry
+                            absence_entry = TimesheetEntry(
+                                consultant_id=absence_request.consultant_id,
+                                work_date=absence_date,
+                                activity_type=ActivityType.ABSENCE,
+                                time_fraction=0.5,
+                                absence_type=new_absence_type,
+                                absence_request_id=absence_request.id,
+                                description=f"Absence: {new_absence_type.value}",
+                                status='pending'
+                            )
+                            db.session.add(absence_entry)
+                    else:
+                        # Day is empty but timesheet exists for the month
+                        # Create the absence entry directly
+                        absence_entry = TimesheetEntry(
+                            consultant_id=absence_request.consultant_id,
+                            work_date=absence_date,
+                            activity_type=ActivityType.ABSENCE,
+                            time_fraction=absence_time_fraction,
+                            absence_type=new_absence_type,
+                            absence_request_id=absence_request.id,
+                            description=f"Absence: {new_absence_type.value}",
+                            status='pending'
+                        )
+                        db.session.add(absence_entry)
+
+            # Update status of all records in affected months to 'pending'
+            for year, month in affected_months:
+                first_day = date(year, month, 1)
+                last_day = date(year, month, calendar.monthrange(year, month)[1])
+                
+                month_entries = TimesheetEntry.query.filter(
+                    TimesheetEntry.consultant_id == absence_request.consultant_id,
+                    TimesheetEntry.work_date >= first_day,
+                    TimesheetEntry.work_date <= last_day
+                ).all()
+                
+                for entry in month_entries:
+                    entry.status = 'pending'
 
         # After updates, set overall status from payload or default to pending
         new_status_value = data.get('status', AbsenceRequestStatus.PENDING.value)
