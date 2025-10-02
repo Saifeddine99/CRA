@@ -3,7 +3,7 @@ from datetime import datetime, date
 import calendar
 from app.extensions import db
 from app.models import (Consultant, Project, ProjectAssignment, TimesheetEntry,
-                       ActivityType, InternalActivityType, AbsenceType, ProjectActivityType)
+                       ActivityType, InternalActivityType, AbsenceRequestType, ProjectActivityType)
 
 timesheet_bp = Blueprint('timesheet', __name__)
 
@@ -97,11 +97,15 @@ def create_timesheet_entry():
             return jsonify({'error': 'absence_type is required for absence activities'}), 400
         
         try:
-            absence_type = AbsenceType(data['absence_type'])
+            absence_type = AbsenceRequestType(data['absence_type'])
         except ValueError:
             return jsonify({'error': 'Invalid absence type'}), 400
         
         entry_data['absence_type'] = absence_type
+        
+        # Handle absence_request_id if provided
+        if data.get('absence_request_id'):
+            entry_data['absence_request_id'] = data['absence_request_id']
     
     entry = TimesheetEntry(**entry_data)
     
@@ -115,7 +119,8 @@ def create_timesheet_entry():
             'work_date': entry.work_date.isoformat(),
             'activity_type': entry.activity_type.value,
             'time_fraction': entry.time_fraction,
-            'description': entry.description
+            'description': entry.description,
+            'status': entry.status
         }
         
         if entry.activity_type == ActivityType.PROJECT:
@@ -129,6 +134,8 @@ def create_timesheet_entry():
             response_data['internal_activity_type'] = entry.internal_activity_type.value
         elif entry.activity_type == ActivityType.ABSENCE:
             response_data['absence_type'] = entry.absence_type.value
+            if entry.absence_request_id:
+                response_data['absence_request_id'] = entry.absence_request_id
         
         return jsonify(response_data), 201
     except Exception as e:
@@ -190,6 +197,8 @@ def get_monthly_timesheet(consultant_id, year, month):
             total_internal_time += entry.time_fraction
         elif entry.activity_type == ActivityType.ABSENCE:
             activity_data['absence_type'] = entry.absence_type.value
+            if entry.absence_request_id:
+                activity_data['absence_request_id'] = entry.absence_request_id
             total_absence_time += entry.time_fraction
         
         daily_entries[date_str]['activities'].append(activity_data)
@@ -201,6 +210,7 @@ def get_monthly_timesheet(consultant_id, year, month):
             'name': consultant.name,
             'email': consultant.email
         },
+        'status': (entries[0].status if entries else ''),
         'period': {
             'year': year,
             'month': month,
@@ -409,6 +419,7 @@ def get_all_timesheets(year, month):
                 'name': consultant.name,
                 'email': consultant.email
             },
+            'status': (entries[0].status if entries else ''),
             'daily_entries': list(daily_entries.values()),
             'summary': summary
         })
@@ -422,6 +433,100 @@ def get_all_timesheets(year, month):
         'total_consultants': len(result),
         'timesheets': result
     })
+
+@timesheet_bp.route('/api/consultants/<int:consultant_id>/timesheet/<int:year>/<int:month>', methods=['DELETE'])
+def delete_monthly_timesheet(consultant_id, year, month):
+    """Delete all timesheet entries for a consultant in a given month if all are deletable.
+    Deletion allowed only when each entry status is 'pending' or 'refused'.
+    """
+    # Validate month and year
+    if not (1 <= month <= 12) or year < 2020 or year > 2030:
+        return jsonify({'error': 'Invalid month or year'}), 400
+    
+    first_day = date(year, month, 1)
+    last_day = date(year, month, calendar.monthrange(year, month)[1])
+    
+    entries = TimesheetEntry.query.filter(
+        TimesheetEntry.consultant_id == consultant_id,
+        TimesheetEntry.work_date >= first_day,
+        TimesheetEntry.work_date <= last_day
+    ).all()
+    
+    if not entries:
+        return jsonify({'error': 'No timesheet entries found for this period'}), 404
+    
+    allowed_statuses = {'pending', 'refused', 'validated'}
+    non_deletable = [
+        {
+            'id': e.id,
+            'work_date': e.work_date.isoformat(),
+            'status': e.status
+        }
+        for e in entries if e.status not in allowed_statuses
+    ]
+    
+    if non_deletable:
+        return jsonify({
+            'error': 'Deletion not allowed: some entries are not pending or refused or validated',
+            'non_deletable_entries': non_deletable
+        }), 400
+    
+    try:
+        for e in entries:
+            db.session.delete(e)
+        db.session.commit()
+        return jsonify({
+            'consultant_id': consultant_id,
+            'year': year,
+            'month': month,
+            'deleted_count': len(entries)
+        }), 200
+    except Exception:
+        db.session.rollback()
+        return jsonify({'error': 'Failed to delete timesheet entries'}), 500
+
+@timesheet_bp.route('/api/consultants/<int:consultant_id>/timesheet/<int:year>/<int:month>/status', methods=['POST'])
+def set_monthly_timesheet_status(consultant_id, year, month):
+    """HR validation endpoint: set status of all entries in a month to 'validated' or 'refused'."""
+    # Validate month and year
+    if not (1 <= month <= 12) or year < 2020 or year > 2030:
+        return jsonify({'error': 'Invalid month or year'}), 400
+    
+    payload = request.get_json(silent=True) or {}
+    status = payload.get('status')
+    if status not in {'validated', 'refused'}:
+        return jsonify({'error': "status must be one of: 'validated', 'refused'"}), 400
+    
+    first_day = date(year, month, 1)
+    last_day = date(year, month, calendar.monthrange(year, month)[1])
+    
+    entries = TimesheetEntry.query.filter(
+        TimesheetEntry.consultant_id == consultant_id,
+        TimesheetEntry.work_date >= first_day,
+        TimesheetEntry.work_date <= last_day
+    ).all()
+    
+    if not entries:
+        return jsonify({'error': 'No timesheet entries found for this period'}), 404
+    
+    try:
+        updated_count = 0
+        for e in entries:
+            if e.status != status:
+                e.status = status
+                updated_count += 1
+        db.session.commit()
+        return jsonify({
+            'consultant_id': consultant_id,
+            'year': year,
+            'month': month,
+            'new_status': status,
+            'affected_count': len(entries),
+            'updated_count': updated_count
+        }), 200
+    except Exception:
+        db.session.rollback()
+        return jsonify({'error': 'Failed to update timesheet status'}), 500
 
 @timesheet_bp.route('/api/consultants/<int:consultant_id>/daily-validation/<work_date>', methods=['GET'])
 def validate_daily_time(consultant_id, work_date):

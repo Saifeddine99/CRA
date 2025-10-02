@@ -21,6 +21,7 @@ class AbsenceRequest(db.Model):
     # Relationships
     consultant = db.relationship('Consultant', backref=db.backref('absence_requests', lazy=True))
     absence_days = db.relationship('AbsenceRequestDay', backref='absence_request', lazy=True, cascade='all, delete-orphan')
+    timesheet_entries = db.relationship('TimesheetEntry', backref='related_absence_request', lazy=True, cascade='all, delete-orphan')
 
 class AbsenceRequestDay(db.Model):
     """Individual days within an absence request"""

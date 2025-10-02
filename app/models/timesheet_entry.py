@@ -8,6 +8,7 @@ class TimesheetEntry(db.Model):
     activity_type = db.Column(db.Enum(ActivityType), nullable=False)
     time_fraction = db.Column(db.Float, nullable=False)  # Must be between 0 and 1
     description = db.Column(db.Text)
+    status = db.Column(db.String(50), nullable=False, default='pending')
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
@@ -23,3 +24,4 @@ class TimesheetEntry(db.Model):
     
     # Absence fields (only for ABSENCE activity type)
     absence_type = db.Column(db.Enum(AbsenceRequestType), nullable=True)
+    absence_request_id = db.Column(db.Integer, db.ForeignKey('absence_request.id'), nullable=True)

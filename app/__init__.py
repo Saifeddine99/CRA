@@ -47,5 +47,15 @@ def create_app(config_name='default'):
     # Create database tables
     with app.app_context():
         db.create_all()
+        # Lightweight migration: ensure TimesheetEntry.status column exists (for SQLite)
+        try:
+            from sqlalchemy import text
+            result = db.session.execute(text("PRAGMA table_info('timesheet_entry')")).fetchall()
+            column_names = {row[1] for row in result}
+            if 'status' not in column_names:
+                db.session.execute(text("ALTER TABLE timesheet_entry ADD COLUMN status VARCHAR(50) NOT NULL DEFAULT 'pending'"))
+                db.session.commit()
+        except Exception:
+            db.session.rollback()
     
     return app
