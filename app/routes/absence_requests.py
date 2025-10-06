@@ -122,11 +122,12 @@ def create_absence_request():
             first_day = date(absence_date.year, absence_date.month, 1)
             last_day = date(absence_date.year, absence_date.month, calendar.monthrange(absence_date.year, absence_date.month)[1])
             
-            # Check if timesheet is submitted for this month
+            # Check if timesheet is submitted for this month and not validated
             submitted_entries = TimesheetEntry.query.filter(
                 TimesheetEntry.consultant_id == data['consultant_id'],
                 TimesheetEntry.work_date >= first_day,
-                TimesheetEntry.work_date <= last_day
+                TimesheetEntry.work_date <= last_day,
+                TimesheetEntry.status != 'validated'
             ).first()
             
             if submitted_entries:
@@ -218,7 +219,8 @@ def create_absence_request():
                         status='pending'
                     )
                     db.session.add(absence_entry)
-                    
+
+        '''
         # Update status of all records in affected months to 'pending'
         for year, month in affected_months:
             first_day = date(year, month, 1)
@@ -232,6 +234,7 @@ def create_absence_request():
             
             for entry in month_entries:
                 entry.status = 'pending'
+        '''
         
         db.session.commit()
         
@@ -485,7 +488,7 @@ def get_consultant_absence_requests(consultant_id, year):
 
 @absence_requests_bp.route('/api/absence-requests/<int:request_id>', methods=['PUT'])
 def update_absence_request(request_id):
-    """Update an absence request (pending or refused). After update, status becomes pending."""
+    """Update an absence request (pending or refused or accepted). After update, status becomes pending."""
     data = request.get_json()
 
     if not data:
@@ -741,8 +744,8 @@ def review_absence_request(request_id):
     
     absence_request = AbsenceRequest.query.get_or_404(request_id)
     
-    #if absence_request.status != AbsenceRequestStatus.PENDING:
-        #return jsonify({'error': 'Only pending requests can be reviewed'}), 400
+    # Store original status to detect changes
+    original_status = absence_request.status
     
     # Validate day decisions
     day_decisions = data['day_decisions']
@@ -790,6 +793,123 @@ def review_absence_request(request_id):
         else:
             absence_request.status = AbsenceRequestStatus.PARTIALLY_ACCEPTED
         
+        # If status changed from refused to accepted (or partially accepted), create timesheet entries
+        if original_status == AbsenceRequestStatus.REFUSED and absence_request.status in [AbsenceRequestStatus.ACCEPTED, AbsenceRequestStatus.PARTIALLY_ACCEPTED]:
+            # Process timesheet updates for accepted absence days
+            affected_months = set()
+            
+            for absence_day in absence_request.absence_days:
+                if absence_day.status == AbsenceRequestStatus.ACCEPTED:
+                    absence_date = absence_day.absence_date
+                    absence_time_fraction = absence_day.time_fraction
+                    
+                    # Get first and last day of the month
+                    first_day = date(absence_date.year, absence_date.month, 1)
+                    last_day = date(absence_date.year, absence_date.month, calendar.monthrange(absence_date.year, absence_date.month)[1])
+                    
+                    # Check if timesheet exists for this month
+                    submitted_entries = TimesheetEntry.query.filter(
+                        TimesheetEntry.consultant_id == absence_request.consultant_id,
+                        TimesheetEntry.work_date >= first_day,
+                        TimesheetEntry.work_date <= last_day
+                    ).first()
+                    
+                    if submitted_entries:
+                        affected_months.add((absence_date.year, absence_date.month))
+                        
+                        # Get daily entries for this date
+                        daily_entries = TimesheetEntry.query.filter(
+                            TimesheetEntry.consultant_id == absence_request.consultant_id,
+                            TimesheetEntry.work_date == absence_date,
+                            TimesheetEntry.activity_type != ActivityType.ABSENCE
+                        ).order_by(TimesheetEntry.id).all()
+                        
+                        if daily_entries:
+                            if absence_time_fraction == 1.0:
+                                # Full day absence - remove all activities
+                                for entry in daily_entries:
+                                    db.session.delete(entry)
+                                
+                                # Create absence entry
+                                absence_entry = TimesheetEntry(
+                                    consultant_id=absence_request.consultant_id,
+                                    work_date=absence_date,
+                                    activity_type=ActivityType.ABSENCE,
+                                    time_fraction=1.0,
+                                    absence_type=absence_request.absence_type,
+                                    absence_request_id=absence_request.id,
+                                    description=f"Absence: {absence_request.absence_type.value}",
+                                    status='pending'
+                                )
+                                db.session.add(absence_entry)
+                                
+                            elif absence_time_fraction == 0.5:
+                                # Half day absence
+                                total_existing_time = sum(entry.time_fraction for entry in daily_entries)
+                                
+                                if total_existing_time == 1.0:
+                                    if len(daily_entries) == 1:
+                                        daily_entries[0].time_fraction = 0.5
+                                    else:
+                                        last_entry = daily_entries[-1]
+                                        db.session.delete(last_entry)
+                                        remaining_time = sum(entry.time_fraction for entry in daily_entries[:-1])
+                                        if remaining_time > 0.5:
+                                            daily_entries[0].time_fraction = 0.5
+                                            for entry in daily_entries[1:-1]:
+                                                db.session.delete(entry)
+                                elif total_existing_time == 0.5:
+                                    pass
+                                else:
+                                    if daily_entries:
+                                        daily_entries[0].time_fraction = 0.5
+                                        for entry in daily_entries[1:]:
+                                            db.session.delete(entry)
+                                
+                                # Create absence entry
+                                absence_entry = TimesheetEntry(
+                                    consultant_id=absence_request.consultant_id,
+                                    work_date=absence_date,
+                                    activity_type=ActivityType.ABSENCE,
+                                    time_fraction=0.5,
+                                    absence_type=absence_request.absence_type,
+                                    absence_request_id=absence_request.id,
+                                    description=f"Absence: {absence_request.absence_type.value}",
+                                    status='pending'
+                                )
+                                db.session.add(absence_entry)
+                        else:
+                            # Day is empty but timesheet exists for the month
+                            absence_entry = TimesheetEntry(
+                                consultant_id=absence_request.consultant_id,
+                                work_date=absence_date,
+                                activity_type=ActivityType.ABSENCE,
+                                time_fraction=absence_time_fraction,
+                                absence_type=absence_request.absence_type,
+                                absence_request_id=absence_request.id,
+                                description=f"Absence: {absence_request.absence_type.value}",
+                                status='pending'
+                            )
+                            db.session.add(absence_entry)
+            
+            # Update status of all records in affected months to 'pending'
+            for year, month in affected_months:
+                first_day = date(year, month, 1)
+                last_day = date(year, month, calendar.monthrange(year, month)[1])
+                
+                month_entries = TimesheetEntry.query.filter(
+                    TimesheetEntry.consultant_id == absence_request.consultant_id,
+                    TimesheetEntry.work_date >= first_day,
+                    TimesheetEntry.work_date <= last_day
+                ).all()
+                
+                for entry in month_entries:
+                    entry.status = 'pending'
+        
+        elif refused_count > 0:
+            # Delete related timesheet entries if any days were refused
+            TimesheetEntry.query.filter_by(absence_request_id=request_id).delete()
+        
         # Update review information
         absence_request.reviewed_at = datetime.utcnow()
         absence_request.reviewed_by = data['reviewed_by']
@@ -816,8 +936,8 @@ def delete_absence_request(request_id):
     """Delete an absence request only if it's pending. Related timesheet entries and child days are removed via cascade delete-orphan."""
     absence_request = AbsenceRequest.query.get_or_404(request_id)
 
-    if absence_request.status != AbsenceRequestStatus.PENDING:
-        return jsonify({'error': 'Only pending requests can be deleted'}), 400
+    if absence_request.status not in [AbsenceRequestStatus.PENDING, AbsenceRequestStatus.REFUSED]:
+        return jsonify({'error': 'Only pending or refused requests can be deleted'}), 400
 
     try:
         # Extract all dates from the absence request to determine affected months

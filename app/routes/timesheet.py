@@ -3,7 +3,7 @@ from datetime import datetime, date
 import calendar
 from app.extensions import db
 from app.models import (Consultant, Project, ProjectAssignment, TimesheetEntry,
-                       ActivityType, InternalActivityType, AbsenceRequestType, ProjectActivityType)
+                       ActivityType, InternalActivityType, AbsenceRequestType, ProjectActivityType, AbsenceRequestStatus, AbsenceRequestDay, AbsenceRequest)
 
 timesheet_bp = Blueprint('timesheet', __name__)
 
@@ -340,10 +340,10 @@ def get_all_timesheets(year, month):
     # Validate month and year
     if not (1 <= month <= 12) or year < 2020 or year > 2030:
         return jsonify({'error': 'Invalid month or year'}), 400
-    
+
     # Optional consultant filter
     consultant_id = request.args.get('consultant_id', type=int)
-    
+
     # Get consultants
     if consultant_id:
         consultants = Consultant.query.filter_by(id=consultant_id).all()
@@ -351,14 +351,14 @@ def get_all_timesheets(year, month):
             return jsonify({'error': 'Consultant not found'}), 404
     else:
         consultants = Consultant.query.all()
-    
+
     # Get first and last day of month
     first_day = date(year, month, 1)
     last_day = date(year, month, calendar.monthrange(year, month)[1])
-    
+
     # Build result for all consultants
     result = []
-    
+
     for consultant in consultants:
         # Query timesheet entries for this consultant
         entries = TimesheetEntry.query.filter(
@@ -366,7 +366,7 @@ def get_all_timesheets(year, month):
             TimesheetEntry.work_date >= first_day,
             TimesheetEntry.work_date <= last_day
         ).order_by(TimesheetEntry.work_date).all()
-        
+
         daily_entries = {}
         summary = {
             'total_project_time': 0,
@@ -374,7 +374,7 @@ def get_all_timesheets(year, month):
             'total_absence_time': 0,
             'total_working_days': 0
         }
-        
+
         # Process entries if they exist
         for entry in entries:
             date_str = entry.work_date.isoformat()
@@ -384,14 +384,14 @@ def get_all_timesheets(year, month):
                     'activities': [],
                     'total_time': 0
                 }
-            
+
             activity_data = {
                 'id': entry.id,
                 'activity_type': entry.activity_type.value,
                 'time_fraction': entry.time_fraction,
                 'description': entry.description
             }
-            
+
             if entry.activity_type == ActivityType.PROJECT:
                 activity_data.update({
                     'project_id': entry.project_id,
@@ -406,13 +406,23 @@ def get_all_timesheets(year, month):
             elif entry.activity_type == ActivityType.ABSENCE:
                 activity_data['absence_type'] = entry.absence_type.value
                 summary['total_absence_time'] += entry.time_fraction
-            
+
             daily_entries[date_str]['activities'].append(activity_data)
             daily_entries[date_str]['total_time'] += entry.time_fraction
-        
+
         # Calculate working days
         summary['total_working_days'] = len([d for d in daily_entries.values() if d['total_time'] > 0])
-        
+
+        # ✅ Check if consultant has pending absence requests for this month
+        has_pending_absences = db.session.query(AbsenceRequestDay.id).join(
+            AbsenceRequestDay.absence_request
+        ).filter(
+            AbsenceRequest.consultant_id == consultant.id,
+            AbsenceRequestDay.absence_date >= first_day,
+            AbsenceRequestDay.absence_date <= last_day,
+            AbsenceRequestDay.status == AbsenceRequestStatus.PENDING
+        ).first() is not None
+
         result.append({
             'consultant': {
                 'id': consultant.id,
@@ -421,9 +431,10 @@ def get_all_timesheets(year, month):
             },
             'status': (entries[0].status if entries else ''),
             'daily_entries': list(daily_entries.values()),
-            'summary': summary
+            'summary': summary,
+            'has_pending_absence_requests': has_pending_absences   # 👈 new field
         })
-    
+
     return jsonify({
         'period': {
             'year': year,
@@ -488,27 +499,44 @@ def delete_monthly_timesheet(consultant_id, year, month):
 @timesheet_bp.route('/api/consultants/<int:consultant_id>/timesheet/<int:year>/<int:month>/status', methods=['POST'])
 def set_monthly_timesheet_status(consultant_id, year, month):
     """HR validation endpoint: set status of all entries in a month to 'validated' or 'refused'."""
+
     # Validate month and year
     if not (1 <= month <= 12) or year < 2020 or year > 2030:
         return jsonify({'error': 'Invalid month or year'}), 400
-    
+
     payload = request.get_json(silent=True) or {}
     status = payload.get('status')
     if status not in {'validated', 'refused'}:
         return jsonify({'error': "status must be one of: 'validated', 'refused'"}), 400
-    
+
     first_day = date(year, month, 1)
     last_day = date(year, month, calendar.monthrange(year, month)[1])
-    
+
+    # ✅ Correct join using relationship attribute
+    pending_absences = AbsenceRequestDay.query.join(AbsenceRequestDay.absence_request).filter(
+        AbsenceRequestDay.absence_date >= first_day,
+        AbsenceRequestDay.absence_date <= last_day,
+        AbsenceRequestDay.status == AbsenceRequestStatus.PENDING,
+        AbsenceRequest.consultant_id == consultant_id
+    ).count()
+
+    if pending_absences > 0:
+        return jsonify({
+            'error': 'There are pending absence requests for this period. '
+                     'All absence requests must be reviewed before updating the timesheet status.',
+            'pending_absences_count': pending_absences
+        }), 400
+
+    # Fetch timesheet entries
     entries = TimesheetEntry.query.filter(
         TimesheetEntry.consultant_id == consultant_id,
         TimesheetEntry.work_date >= first_day,
         TimesheetEntry.work_date <= last_day
     ).all()
-    
+
     if not entries:
         return jsonify({'error': 'No timesheet entries found for this period'}), 404
-    
+
     try:
         updated_count = 0
         for e in entries:
