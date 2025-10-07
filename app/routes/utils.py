@@ -1,6 +1,6 @@
 from flask import Blueprint, jsonify
 from app.models import (ActivityType, InternalActivityType, ProjectActivityType,
-                       AbsenceRequestType, AbsenceRequestStatus)
+                       AbsenceRequestType, AbsenceRequestStatus, TimesheetStatus)
 
 utils_bp = Blueprint('utils', __name__)
 
@@ -13,5 +13,6 @@ def get_enums():
         'absence_types': [e.value for e in AbsenceRequestType],
         'project_activity_types': [e.value for e in ProjectActivityType],
         'absence_request_types': [e.value for e in AbsenceRequestType],
-        'absence_request_statuses': [e.value for e in AbsenceRequestStatus]
+        'absence_request_statuses': [e.value for e in AbsenceRequestStatus],
+        'timesheet_statuses': [e.value for e in TimesheetStatus]
     })
