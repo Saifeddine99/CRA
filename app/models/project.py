@@ -13,5 +13,5 @@ class Project(db.Model):
     is_active = db.Column(db.Boolean, default=True)
     
     # Relationships
-    timesheet_entries = db.relationship('TimesheetEntry', backref='project', lazy=True)
-    project_assignments = db.relationship('ProjectAssignment', backref='project', lazy=True)
+    daily_timesheet_entries = db.relationship('DailyTimesheetEntry', backref='project', lazy=True)
+    project_assignments = db.relationship('ProjectAssignment', backref='project', lazy=True, cascade='all, delete-orphan')

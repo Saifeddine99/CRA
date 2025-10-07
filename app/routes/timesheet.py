@@ -2,7 +2,7 @@ from flask import Blueprint, request, jsonify
 from datetime import datetime, date
 import calendar
 from app.extensions import db
-from app.models import (Consultant, Project, ProjectAssignment, TimesheetEntry,
+from app.models import (Consultant, Project, ProjectAssignment, MonthlyTimesheet, DailyTimesheetEntry,
                        ActivityType, InternalActivityType, AbsenceRequestType, ProjectActivityType, AbsenceRequestStatus, AbsenceRequestDay, AbsenceRequest)
 
 timesheet_bp = Blueprint('timesheet', __name__)
@@ -38,7 +38,7 @@ def create_timesheet_entry():
         return jsonify({'error': 'Invalid date format. Use YYYY-MM-DD'}), 400
     
     # Check daily time fraction limit
-    existing_entries = TimesheetEntry.query.filter_by(
+    existing_entries = DailyTimesheetEntry.query.filter_by(
         consultant_id=data['consultant_id'],
         work_date=work_date
     ).all()
@@ -107,7 +107,7 @@ def create_timesheet_entry():
         if data.get('absence_request_id'):
             entry_data['absence_request_id'] = data['absence_request_id']
     
-    entry = TimesheetEntry(**entry_data)
+    entry = DailyTimesheetEntry(**entry_data)
     
     try:
         db.session.add(entry)
@@ -156,11 +156,11 @@ def get_monthly_timesheet(consultant_id, year, month):
     last_day = date(year, month, calendar.monthrange(year, month)[1])
     
     # Query timesheet entries for the month
-    entries = TimesheetEntry.query.filter(
-        TimesheetEntry.consultant_id == consultant_id,
-        TimesheetEntry.work_date >= first_day,
-        TimesheetEntry.work_date <= last_day
-    ).order_by(TimesheetEntry.work_date).all()
+    entries = DailyTimesheetEntry.query.filter(
+        DailyTimesheetEntry.consultant_id == consultant_id,
+        DailyTimesheetEntry.work_date >= first_day,
+        DailyTimesheetEntry.work_date <= last_day
+    ).order_by(DailyTimesheetEntry.work_date).all()
     
     # Group entries by date
     daily_entries = {}
@@ -234,10 +234,10 @@ def get_monthly_summary(consultant_id, year, month):
     first_day = date(year, month, 1)
     last_day = date(year, month, calendar.monthrange(year, month)[1])
     
-    entries = TimesheetEntry.query.filter(
-        TimesheetEntry.consultant_id == consultant_id,
-        TimesheetEntry.work_date >= first_day,
-        TimesheetEntry.work_date <= last_day
+    entries = DailyTimesheetEntry.query.filter(
+        DailyTimesheetEntry.consultant_id == consultant_id,
+        DailyTimesheetEntry.work_date >= first_day,
+        DailyTimesheetEntry.work_date <= last_day
     ).all()
     
     if not entries:
@@ -361,11 +361,11 @@ def get_all_timesheets(year, month):
 
     for consultant in consultants:
         # Query timesheet entries for this consultant
-        entries = TimesheetEntry.query.filter(
-            TimesheetEntry.consultant_id == consultant.id,
-            TimesheetEntry.work_date >= first_day,
-            TimesheetEntry.work_date <= last_day
-        ).order_by(TimesheetEntry.work_date).all()
+        entries = DailyTimesheetEntry.query.filter(
+            DailyTimesheetEntry.consultant_id == consultant.id,
+            DailyTimesheetEntry.work_date >= first_day,
+            DailyTimesheetEntry.work_date <= last_day
+        ).order_by(DailyTimesheetEntry.work_date).all()
 
         daily_entries = {}
         summary = {
@@ -457,10 +457,10 @@ def delete_monthly_timesheet(consultant_id, year, month):
     first_day = date(year, month, 1)
     last_day = date(year, month, calendar.monthrange(year, month)[1])
     
-    entries = TimesheetEntry.query.filter(
-        TimesheetEntry.consultant_id == consultant_id,
-        TimesheetEntry.work_date >= first_day,
-        TimesheetEntry.work_date <= last_day
+    entries = DailyTimesheetEntry.query.filter(
+        DailyTimesheetEntry.consultant_id == consultant_id,
+        DailyTimesheetEntry.work_date >= first_day,
+        DailyTimesheetEntry.work_date <= last_day
     ).all()
     
     if not entries:
@@ -528,10 +528,10 @@ def set_monthly_timesheet_status(consultant_id, year, month):
         }), 400
 
     # Fetch timesheet entries
-    entries = TimesheetEntry.query.filter(
-        TimesheetEntry.consultant_id == consultant_id,
-        TimesheetEntry.work_date >= first_day,
-        TimesheetEntry.work_date <= last_day
+    entries = DailyTimesheetEntry.query.filter(
+        DailyTimesheetEntry.consultant_id == consultant_id,
+        DailyTimesheetEntry.work_date >= first_day,
+        DailyTimesheetEntry.work_date <= last_day
     ).all()
 
     if not entries:
@@ -564,7 +564,7 @@ def validate_daily_time(consultant_id, work_date):
     except ValueError:
         return jsonify({'error': 'Invalid date format. Use YYYY-MM-DD'}), 400
     
-    entries = TimesheetEntry.query.filter_by(
+    entries = DailyTimesheetEntry.query.filter_by(
         consultant_id=consultant_id,
         work_date=parsed_date
     ).all()

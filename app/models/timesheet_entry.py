@@ -27,7 +27,7 @@ class MonthlyTimesheet(db.Model):
     manager_comments = db.Column(db.Text, nullable=True)
 
     # Relationships
-    consultant = db.relationship('Consultant', backref=db.backref('monthly_timesheets', lazy=True))
+    #consultant = db.relationship('Consultant', backref=db.backref('monthly_timesheets', lazy=True))
     daily_entries = db.relationship('DailyTimesheetEntry', backref='monthly_timesheet', lazy=True, cascade='all, delete-orphan')
 
     # Ensure one monthly timesheet per consultant per month-year

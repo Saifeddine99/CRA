@@ -3,7 +3,7 @@ from datetime import datetime, date
 import calendar  # noqa: F401
 from app.extensions import db
 from app.models import (Consultant, AbsenceRequest, AbsenceRequestDay,
-                       AbsenceRequestType, AbsenceRequestStatus, TimesheetEntry, ActivityType)  # noqa: F401
+                       AbsenceRequestType, AbsenceRequestStatus, MonthlyTimesheet, DailyTimesheetEntry, ActivityType)  # noqa: F401
 
 absence_requests_bp = Blueprint('absence_requests', __name__)
 
@@ -123,11 +123,11 @@ def create_absence_request():
             last_day = date(absence_date.year, absence_date.month, calendar.monthrange(absence_date.year, absence_date.month)[1])
             
             # Check if timesheet is submitted for this month and not validated
-            submitted_entries = TimesheetEntry.query.filter(
-                TimesheetEntry.consultant_id == data['consultant_id'],
-                TimesheetEntry.work_date >= first_day,
-                TimesheetEntry.work_date <= last_day,
-                TimesheetEntry.status != 'validated'
+            submitted_entries = DailyTimesheetEntry.query.filter(
+                DailyTimesheetEntry.consultant_id == data['consultant_id'],
+                DailyTimesheetEntry.work_date >= first_day,
+                DailyTimesheetEntry.work_date <= last_day,
+                DailyTimesheetEntry.status != 'validated'
             ).first()
             
             if submitted_entries:
@@ -135,11 +135,11 @@ def create_absence_request():
                 affected_months.add((absence_date.year, absence_date.month))
                 
                 # Get all timesheet entries for this specific date
-                daily_entries = TimesheetEntry.query.filter(
-                    TimesheetEntry.consultant_id == data['consultant_id'],
-                    TimesheetEntry.work_date == absence_date,
-                    TimesheetEntry.activity_type != ActivityType.ABSENCE
-                ).order_by(TimesheetEntry.id).all()
+                daily_entries = DailyTimesheetEntry.query.filter(
+                    DailyTimesheetEntry.consultant_id == data['consultant_id'],
+                    DailyTimesheetEntry.work_date == absence_date,
+                    DailyTimesheetEntry.activity_type != ActivityType.ABSENCE
+                ).order_by(DailyTimesheetEntry.id).all()
                 
                 if daily_entries:
                     if absence_time_fraction == 1.0:
@@ -148,7 +148,7 @@ def create_absence_request():
                             db.session.delete(entry)
                         
                         # Create new absence entry
-                        absence_entry = TimesheetEntry(
+                        absence_entry = DailyTimesheetEntry(
                             consultant_id=data['consultant_id'],
                             work_date=absence_date,
                             activity_type=ActivityType.ABSENCE,
@@ -194,7 +194,7 @@ def create_absence_request():
                                     db.session.delete(entry)
                         
                         # Create absence entry
-                        absence_entry = TimesheetEntry(
+                        absence_entry = DailyTimesheetEntry(
                             consultant_id=data['consultant_id'],
                             work_date=absence_date,
                             activity_type=ActivityType.ABSENCE,
@@ -208,7 +208,7 @@ def create_absence_request():
                 else:
                     # Day is empty but timesheet exists for the month
                     # Create the absence entry directly
-                    absence_entry = TimesheetEntry(
+                    absence_entry = DailyTimesheetEntry(
                         consultant_id=absence_request.consultant_id,
                         work_date=absence_date,
                         activity_type=ActivityType.ABSENCE,
@@ -226,10 +226,10 @@ def create_absence_request():
             first_day = date(year, month, 1)
             last_day = date(year, month, calendar.monthrange(year, month)[1])
             
-            month_entries = TimesheetEntry.query.filter(
-                TimesheetEntry.consultant_id == data['consultant_id'],
-                TimesheetEntry.work_date >= first_day,
-                TimesheetEntry.work_date <= last_day
+            month_entries = DailyTimesheetEntry.query.filter(
+                DailyTimesheetEntry.consultant_id == data['consultant_id'],
+                DailyTimesheetEntry.work_date >= first_day,
+                DailyTimesheetEntry.work_date <= last_day
             ).all()
             
             for entry in month_entries:
@@ -519,10 +519,10 @@ def analyze_affected_months(absence_request, old_days, new_days):
         last_day = date(year, month, monthrange(year, month)[1])
 
         # --- Fetch timesheet entries to get monthly status
-        entries = TimesheetEntry.query.filter(
-            TimesheetEntry.consultant_id == consultant_id,
-            TimesheetEntry.work_date >= first_day,
-            TimesheetEntry.work_date <= last_day
+        entries = DailyTimesheetEntry.query.filter(
+            DailyTimesheetEntry.consultant_id == consultant_id,
+            DailyTimesheetEntry.work_date >= first_day,
+            DailyTimesheetEntry.work_date <= last_day
         ).all()
         timesheet_status = entries[0].status if entries else ''
 
@@ -646,9 +646,9 @@ def update_absence_request(request_id):
             # Delete existing days
             AbsenceRequestDay.query.filter_by(absence_request_id=absence_request.id).delete()
             # Delete related timesheet entries
-            TimesheetEntry.query.filter(
-                TimesheetEntry.absence_request_id == absence_request.id,
-                TimesheetEntry.status != 'validated'
+            DailyTimesheetEntry.query.filter(
+                DailyTimesheetEntry.absence_request_id == absence_request.id,
+                DailyTimesheetEntry.status != 'validated'
             ).delete()
             # Insert new days
             for day in parsed_days:
@@ -672,11 +672,11 @@ def update_absence_request(request_id):
                 last_day = date(absence_date.year, absence_date.month, calendar.monthrange(absence_date.year, absence_date.month)[1])
                 
                 # Check if timesheet is submitted for this month and not validated
-                submitted_entries = TimesheetEntry.query.filter(
-                    TimesheetEntry.consultant_id == absence_request.consultant_id,
-                    TimesheetEntry.work_date >= first_day,
-                    TimesheetEntry.work_date <= last_day,
-                    TimesheetEntry.status != 'validated'
+                submitted_entries = DailyTimesheetEntry.query.filter(
+                    DailyTimesheetEntry.consultant_id == absence_request.consultant_id,
+                    DailyTimesheetEntry.work_date >= first_day,
+                    DailyTimesheetEntry.work_date <= last_day,
+                    DailyTimesheetEntry.status != 'validated'
                 ).first()
                 
                 if submitted_entries:
@@ -684,11 +684,11 @@ def update_absence_request(request_id):
                     #affected_months.add((absence_date.year, absence_date.month))
                     
                     # Get all timesheet entries for this specific date
-                    daily_entries = TimesheetEntry.query.filter(
-                        TimesheetEntry.consultant_id == absence_request.consultant_id,
-                        TimesheetEntry.work_date == absence_date,
-                        TimesheetEntry.activity_type != ActivityType.ABSENCE
-                    ).order_by(TimesheetEntry.id).all()
+                    daily_entries = DailyTimesheetEntry.query.filter(
+                        DailyTimesheetEntry.consultant_id == absence_request.consultant_id,
+                        DailyTimesheetEntry.work_date == absence_date,
+                        DailyTimesheetEntry.activity_type != ActivityType.ABSENCE
+                    ).order_by(DailyTimesheetEntry.id).all()
                     
                     if daily_entries:
                         if absence_time_fraction == 1.0:
@@ -697,7 +697,7 @@ def update_absence_request(request_id):
                                 db.session.delete(entry)
                             
                             # Create new absence entry
-                            absence_entry = TimesheetEntry(
+                            absence_entry = DailyTimesheetEntry(
                                 consultant_id=absence_request.consultant_id,
                                 work_date=absence_date,
                                 activity_type=ActivityType.ABSENCE,
@@ -743,7 +743,7 @@ def update_absence_request(request_id):
                                         db.session.delete(entry)
                             
                             # Create absence entry
-                            absence_entry = TimesheetEntry(
+                            absence_entry = DailyTimesheetEntry(
                                 consultant_id=absence_request.consultant_id,
                                 work_date=absence_date,
                                 activity_type=ActivityType.ABSENCE,
@@ -757,7 +757,7 @@ def update_absence_request(request_id):
                     else:
                         # Day is empty but timesheet exists for the month
                         # Create the absence entry directly
-                        absence_entry = TimesheetEntry(
+                        absence_entry = DailyTimesheetEntry(
                             consultant_id=absence_request.consultant_id,
                             work_date=absence_date,
                             activity_type=ActivityType.ABSENCE,
@@ -775,10 +775,10 @@ def update_absence_request(request_id):
                 first_day = date(year, month, 1)
                 last_day = date(year, month, calendar.monthrange(year, month)[1])
                 
-                month_entries = TimesheetEntry.query.filter(
-                    TimesheetEntry.consultant_id == absence_request.consultant_id,
-                    TimesheetEntry.work_date >= first_day,
-                    TimesheetEntry.work_date <= last_day
+                month_entries = DailyTimesheetEntry.query.filter(
+                    DailyTimesheetEntry.consultant_id == absence_request.consultant_id,
+                    DailyTimesheetEntry.work_date >= first_day,
+                    DailyTimesheetEntry.work_date <= last_day
                 ).all()
                 
                 for entry in month_entries:
@@ -890,21 +890,21 @@ def review_absence_request(request_id):
                     last_day = date(absence_date.year, absence_date.month, calendar.monthrange(absence_date.year, absence_date.month)[1])
                     
                     # Check if timesheet exists for this month
-                    submitted_entries = TimesheetEntry.query.filter(
-                        TimesheetEntry.consultant_id == absence_request.consultant_id,
-                        TimesheetEntry.work_date >= first_day,
-                        TimesheetEntry.work_date <= last_day
+                    submitted_entries = DailyTimesheetEntry.query.filter(
+                        DailyTimesheetEntry.consultant_id == absence_request.consultant_id,
+                        DailyTimesheetEntry.work_date >= first_day,
+                        DailyTimesheetEntry.work_date <= last_day
                     ).first()
                     
                     if submitted_entries:
                         affected_months.add((absence_date.year, absence_date.month))
                         
                         # Get daily entries for this date
-                        daily_entries = TimesheetEntry.query.filter(
-                            TimesheetEntry.consultant_id == absence_request.consultant_id,
-                            TimesheetEntry.work_date == absence_date,
-                            TimesheetEntry.activity_type != ActivityType.ABSENCE
-                        ).order_by(TimesheetEntry.id).all()
+                        daily_entries = DailyTimesheetEntry.query.filter(
+                            DailyTimesheetEntry.consultant_id == absence_request.consultant_id,
+                            DailyTimesheetEntry.work_date == absence_date,
+                            DailyTimesheetEntry.activity_type != ActivityType.ABSENCE
+                        ).order_by(DailyTimesheetEntry.id).all()
                         
                         if daily_entries:
                             if absence_time_fraction == 1.0:
@@ -913,7 +913,7 @@ def review_absence_request(request_id):
                                     db.session.delete(entry)
                                 
                                 # Create absence entry
-                                absence_entry = TimesheetEntry(
+                                absence_entry = DailyTimesheetEntry(
                                     consultant_id=absence_request.consultant_id,
                                     work_date=absence_date,
                                     activity_type=ActivityType.ABSENCE,
@@ -949,7 +949,7 @@ def review_absence_request(request_id):
                                             db.session.delete(entry)
                                 
                                 # Create absence entry
-                                absence_entry = TimesheetEntry(
+                                absence_entry = DailyTimesheetEntry(
                                     consultant_id=absence_request.consultant_id,
                                     work_date=absence_date,
                                     activity_type=ActivityType.ABSENCE,
@@ -962,7 +962,7 @@ def review_absence_request(request_id):
                                 db.session.add(absence_entry)
                         else:
                             # Day is empty but timesheet exists for the month
-                            absence_entry = TimesheetEntry(
+                            absence_entry = DailyTimesheetEntry(
                                 consultant_id=absence_request.consultant_id,
                                 work_date=absence_date,
                                 activity_type=ActivityType.ABSENCE,
@@ -979,10 +979,10 @@ def review_absence_request(request_id):
                 first_day = date(year, month, 1)
                 last_day = date(year, month, calendar.monthrange(year, month)[1])
                 
-                month_entries = TimesheetEntry.query.filter(
-                    TimesheetEntry.consultant_id == absence_request.consultant_id,
-                    TimesheetEntry.work_date >= first_day,
-                    TimesheetEntry.work_date <= last_day
+                month_entries = DailyTimesheetEntry.query.filter(
+                    DailyTimesheetEntry.consultant_id == absence_request.consultant_id,
+                    DailyTimesheetEntry.work_date >= first_day,
+                    DailyTimesheetEntry.work_date <= last_day
                 ).all()
                 
                 for entry in month_entries:
@@ -990,7 +990,7 @@ def review_absence_request(request_id):
         
         elif refused_count > 0:
             # Delete related timesheet entries if any days were refused
-            TimesheetEntry.query.filter_by(absence_request_id=request_id).delete()
+            DailyTimesheetEntry.query.filter_by(absence_request_id=request_id).delete()
         
         # Update review information
         absence_request.reviewed_at = datetime.utcnow()
@@ -1039,10 +1039,10 @@ def delete_absence_request(request_id):
             first_day = date(year, month, 1)
             last_day = date(year, month, calendar.monthrange(year, month)[1])
             
-            month_entries = TimesheetEntry.query.filter(
-                TimesheetEntry.consultant_id == consultant_id,
-                TimesheetEntry.work_date >= first_day,
-                TimesheetEntry.work_date <= last_day
+            month_entries = DailyTimesheetEntry.query.filter(
+                DailyTimesheetEntry.consultant_id == consultant_id,
+                DailyTimesheetEntry.work_date >= first_day,
+                DailyTimesheetEntry.work_date <= last_day
             ).all()
             
             for entry in month_entries:
