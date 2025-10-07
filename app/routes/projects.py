@@ -1,3 +1,4 @@
+from datetime import datetime
 from flask import Blueprint, request, jsonify
 from app.extensions import db
 from app.models import Project
@@ -14,13 +15,20 @@ def create_project():
         if not data or not data.get(field):
             return jsonify({'error': f'{field} is required'}), 400
     
+    # Validate starts_at and ends_at
+    try:
+        starts_at = datetime.strptime(data['starts_at'], '%Y-%m-%d').date()
+        ends_at = datetime.strptime(data['ends_at'], '%Y-%m-%d').date()
+    except ValueError:
+        return jsonify({'error': 'Invalid date format. Use YYYY-MM-DD'}), 400
+    
     project = Project(
         name=data['name'],
         client_company=data['client_company'],
         represented_by=data['represented_by'],
         supervisor_email=data['supervisor_email'],
-        starts_at=data['starts_at'],
-        ends_at=data['ends_at']
+        starts_at=starts_at,
+        ends_at=ends_at
     )
     
     try:

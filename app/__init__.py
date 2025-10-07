@@ -44,10 +44,10 @@ def create_app(config_name='default'):
         db.session.rollback()
         return jsonify({'error': 'Internal server error'}), 500
     
-    '''
     # Create database tables
     with app.app_context():
         db.create_all()
+        '''
         # Lightweight migration: ensure MonthlyTimesheet.status column exists (for SQLite)
         try:
             from sqlalchemy import text
@@ -62,5 +62,5 @@ def create_app(config_name='default'):
                 db.session.commit()
         except Exception:
             db.session.rollback()
-    '''
+        '''
     return app
