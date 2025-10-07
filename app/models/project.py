@@ -8,6 +8,8 @@ class Project(db.Model):
     represented_by = db.Column(db.String(100), nullable=False)
     supervisor_email = db.Column(db.String(120), nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    starts_at = db.Column(db.DateTime, nullable=False) # Date of the start of the project
+    ends_at = db.Column(db.DateTime, nullable=False) # Date of the end of the project
     is_active = db.Column(db.Boolean, default=True)
     
     # Relationships

@@ -235,7 +235,7 @@ def create_absence_request():
             for entry in month_entries:
                 entry.status = 'pending'
         '''
-        
+
         db.session.commit()
         
         return jsonify({
@@ -486,6 +486,60 @@ def get_consultant_absence_requests(consultant_id, year):
     
     return jsonify(result)
 
+
+def analyze_affected_months(absence_request, old_days, new_days):
+    """
+    Compare old and new absence days to extract affected months and detect modifications.
+    Returns a list of objects:
+    [
+        {
+            'year': int,
+            'month': int,
+            'timesheet_status': str,
+            'absence_modified': bool
+        }
+    ]
+    """
+    from calendar import monthrange
+    consultant_id = absence_request.consultant_id
+
+    # 1️⃣ Collect all affected months (before + after update)
+    affected_months = set()
+    for d in old_days + new_days:
+        affected_months.add((d['date'].year, d['date'].month))
+
+    results = []
+
+    # 2️⃣ Prepare sets to compare differences in absence days
+    old_set = {(d['date'], d['time_fraction']) for d in old_days}
+    new_set = {(d['date'], d['time_fraction']) for d in new_days}
+
+    for (year, month) in sorted(affected_months):
+        first_day = date(year, month, 1)
+        last_day = date(year, month, monthrange(year, month)[1])
+
+        # --- Fetch timesheet entries to get monthly status
+        entries = TimesheetEntry.query.filter(
+            TimesheetEntry.consultant_id == consultant_id,
+            TimesheetEntry.work_date >= first_day,
+            TimesheetEntry.work_date <= last_day
+        ).all()
+        timesheet_status = entries[0].status if entries else ''
+
+        # --- Check if absence details changed in this month
+        old_month_days = {(d['date'], d['time_fraction']) for d in old_days if d['date'].year == year and d['date'].month == month}
+        new_month_days = {(d['date'], d['time_fraction']) for d in new_days if d['date'].year == year and d['date'].month == month}
+        absence_modified = old_month_days != new_month_days
+
+        results.append({
+            'year': year,
+            'month': month,
+            'timesheet_status': timesheet_status,
+            'absence_modified': absence_modified
+        })
+
+    return results
+
 @absence_requests_bp.route('/api/absence-requests/<int:request_id>', methods=['PUT'])
 def update_absence_request(request_id):
     """Update an absence request (pending or refused or accepted). After update, status becomes pending."""
@@ -498,9 +552,16 @@ def update_absence_request(request_id):
     absence_request = AbsenceRequest.query.get_or_404(request_id)
 
     # Only pending, refused, or accepted requests can be updated
+    #Accepted absence requests can only be updated by HR team
     if absence_request.status not in [AbsenceRequestStatus.PENDING, AbsenceRequestStatus.REFUSED, AbsenceRequestStatus.ACCEPTED]:
         return jsonify({'error': 'Only pending, refused, or accepted requests can be updated'}), 400
-
+    
+    if absence_request.status == AbsenceRequestStatus.ACCEPTED:
+        # Check if "reviewed_by" is provided
+        reviewed_by = data.get('reviewed_by', "")
+        if reviewed_by != 'hr@company.com':
+            return jsonify({'error': 'reviewed_by is required for accepted absence requests and must be hr@company.com'}), 400
+    
     # Optional fields
     new_commentary = data.get('commentary', absence_request.commentary)
     new_justification = data.get('justification', absence_request.justification)
@@ -531,6 +592,19 @@ def update_absence_request(request_id):
             if time_fraction not in [0.5, 1.0]:
                 return jsonify({'error': 'time_fraction must be 0.5 or 1.0'}), 400
             parsed_days.append({'date': absence_date, 'time_fraction': time_fraction})
+        
+        # Extract old and new absence day info for analysis
+        old_days = [{'date': d.absence_date, 'time_fraction': d.time_fraction} for d in absence_request.absence_days]  # after commit, these are new
+        affected_months = analyze_affected_months(absence_request, old_days, parsed_days)
+
+        # 🚫 Prevent modifications on validated timesheets when the absence request is refused
+        if absence_request.status == AbsenceRequestStatus.REFUSED:
+            for m in affected_months:
+                if m['timesheet_status'] == 'validated' and m['absence_modified']:
+                    return jsonify({
+                        'error': f"Cannot modify absence request for {m['month']:02d}/{m['year']} "
+                                f"because the corresponding timesheet is already validated."
+                    }), 400
 
         # Validate conflicts against other requests for the same consultant
         existing_conflicts = []
@@ -572,7 +646,10 @@ def update_absence_request(request_id):
             # Delete existing days
             AbsenceRequestDay.query.filter_by(absence_request_id=absence_request.id).delete()
             # Delete related timesheet entries
-            TimesheetEntry.query.filter_by(absence_request_id=absence_request.id).delete()
+            TimesheetEntry.query.filter(
+                TimesheetEntry.absence_request_id == absence_request.id,
+                TimesheetEntry.status != 'validated'
+            ).delete()
             # Insert new days
             for day in parsed_days:
                 db.session.add(AbsenceRequestDay(
@@ -582,26 +659,29 @@ def update_absence_request(request_id):
                 ))
             
             # Process timesheet updates for each new absence day
-            affected_months = set()
+            #affected_months = set()
             
             for day in parsed_days:
                 absence_date = day['date']
                 absence_time_fraction = day['time_fraction']
+                # check if the month is in the affected months
+                
                 
                 # Get first and last day of the month containing this absence date
                 first_day = date(absence_date.year, absence_date.month, 1)
                 last_day = date(absence_date.year, absence_date.month, calendar.monthrange(absence_date.year, absence_date.month)[1])
                 
-                # Check if timesheet is submitted for this month
+                # Check if timesheet is submitted for this month and not validated
                 submitted_entries = TimesheetEntry.query.filter(
                     TimesheetEntry.consultant_id == absence_request.consultant_id,
                     TimesheetEntry.work_date >= first_day,
-                    TimesheetEntry.work_date <= last_day
+                    TimesheetEntry.work_date <= last_day,
+                    TimesheetEntry.status != 'validated'
                 ).first()
                 
                 if submitted_entries:
                     # Timesheet is submitted, need to update it
-                    affected_months.add((absence_date.year, absence_date.month))
+                    #affected_months.add((absence_date.year, absence_date.month))
                     
                     # Get all timesheet entries for this specific date
                     daily_entries = TimesheetEntry.query.filter(
@@ -689,6 +769,7 @@ def update_absence_request(request_id):
                         )
                         db.session.add(absence_entry)
 
+            '''
             # Update status of all records in affected months to 'pending'
             for year, month in affected_months:
                 first_day = date(year, month, 1)
@@ -702,6 +783,7 @@ def update_absence_request(request_id):
                 
                 for entry in month_entries:
                     entry.status = 'pending'
+            '''
 
         # After updates, set overall status from payload or default to pending
         new_status_value = data.get('status', AbsenceRequestStatus.PENDING.value)

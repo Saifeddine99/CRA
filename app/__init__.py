@@ -17,8 +17,8 @@ def create_app(config_name='default'):
     # Import models to ensure they're registered with SQLAlchemy
     from app.models import (
         Consultant, Project, ProjectAssignment, TimesheetEntry, AbsenceRequest, AbsenceRequestDay,
-        ActivityType, InternalActivityType, AbsenceType, ProjectActivityType,
-        AbsenceRequestType, AbsenceRequestStatus
+        ActivityType, InternalActivityType, ProjectActivityType,
+        AbsenceRequestType, AbsenceRequestStatus, TimesheetStatus
     )
     
     # Register blueprints
@@ -54,6 +54,10 @@ def create_app(config_name='default'):
             column_names = {row[1] for row in result}
             if 'status' not in column_names:
                 db.session.execute(text("ALTER TABLE timesheet_entry ADD COLUMN status VARCHAR(50) NOT NULL DEFAULT 'pending'"))
+                db.session.execute(text("ALTER TABLE timesheet_entry ADD COLUMN absence_type VARCHAR(50) NOT NULL DEFAULT 'absence'"))
+                db.session.execute(text("ALTER TABLE timesheet_entry ADD COLUMN internal_activity_type VARCHAR(50) NOT NULL DEFAULT 'internal'"))
+                db.session.execute(text("ALTER TABLE timesheet_entry ADD COLUMN project_activity_type VARCHAR(50) NOT NULL DEFAULT 'project'"))
+                db.session.execute(text("ALTER TABLE timesheet_entry ADD COLUMN absence_request_id INTEGER REFERENCES absence_request(id)"))
                 db.session.commit()
         except Exception:
             db.session.rollback()

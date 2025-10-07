@@ -10,7 +10,7 @@ def assign_consultant_to_project():
     """Assign a consultant to a project"""
     data = request.get_json()
     
-    required_fields = ['consultant_id', 'project_id', 'position']
+    required_fields = ['consultant_id', 'project_id', 'position', 'starts_at', 'ends_at']
     for field in required_fields:
         if not data or field not in data:
             return jsonify({'error': f'{field} is required'}), 400
@@ -38,7 +38,9 @@ def assign_consultant_to_project():
         assignment = ProjectAssignment(
             consultant_id=data['consultant_id'],
             project_id=data['project_id'],
-            position=data['position']
+            position=data['position'],
+            starts_at=data['starts_at'],
+            ends_at=data['ends_at']
         )
         db.session.add(assignment)
     
@@ -49,7 +51,9 @@ def assign_consultant_to_project():
             'consultant_name': consultant.name,
             'project_name': project.name,
             'position': assignment.position,
-            'assigned_at': assignment.assigned_at.isoformat()
+            'assigned_at': assignment.assigned_at.isoformat(),
+            'starts_at': assignment.starts_at.isoformat(),
+            'ends_at': assignment.ends_at.isoformat()
         }), 201
     except Exception as e:
         db.session.rollback()

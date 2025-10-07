@@ -9,7 +9,7 @@ def create_project():
     """Create a new project"""
     data = request.get_json()
     
-    required_fields = ['name', 'client_company', 'represented_by', 'supervisor_email']
+    required_fields = ['name', 'client_company', 'represented_by', 'supervisor_email', 'starts_at', 'ends_at']
     for field in required_fields:
         if not data or not data.get(field):
             return jsonify({'error': f'{field} is required'}), 400
@@ -18,7 +18,9 @@ def create_project():
         name=data['name'],
         client_company=data['client_company'],
         represented_by=data['represented_by'],
-        supervisor_email=data['supervisor_email']
+        supervisor_email=data['supervisor_email'],
+        starts_at=data['starts_at'],
+        ends_at=data['ends_at']
     )
     
     try:
@@ -30,7 +32,9 @@ def create_project():
             'client_company': project.client_company,
             'represented_by': project.represented_by,
             'supervisor_email': project.supervisor_email,
-            'is_active': project.is_active
+            'is_active': project.is_active,
+            'starts_at': project.starts_at.isoformat(),
+            'ends_at': project.ends_at.isoformat()
         }), 201
     except Exception as e:
         db.session.rollback()
@@ -46,5 +50,7 @@ def get_projects():
         'client_company': p.client_company,
         'represented_by': p.represented_by,
         'supervisor_email': p.supervisor_email,
-        'created_at': p.created_at.isoformat()
+        'created_at': p.created_at.isoformat(),
+        'starts_at': p.starts_at.isoformat(),
+        'ends_at': p.ends_at.isoformat()
     } for p in projects])

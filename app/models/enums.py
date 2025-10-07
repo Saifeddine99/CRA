@@ -11,13 +11,6 @@ class InternalActivityType(Enum):
     INTERNAL_PROJECT = "internal_project"
     TRAINING = "training"
 
-class AbsenceType(Enum):
-    SICK_LEAVE = "sick_leave"
-    VACATION = "vacation"
-    PERSONAL_LEAVE = "personal_leave"
-    PUBLIC_HOLIDAY = "public_holiday"
-    UNPAID_LEAVE = "unpaid_leave"
-
 class ProjectActivityType(Enum):
     NORMALE = "Normale"
     ASTREINTE_CALENDAIRE_SEMAINE = "Astreinte Calendaire Semaine"
@@ -39,3 +32,9 @@ class AbsenceRequestStatus(Enum):
     ACCEPTED = "accepted"
     REFUSED = "refused"
     PARTIALLY_ACCEPTED = "partially_accepted"
+
+class TimesheetStatus(Enum):
+    SAVED = "saved"
+    PENDING = "pending"
+    VALIDATED = "validated"
+    REFUSED = "refused"
