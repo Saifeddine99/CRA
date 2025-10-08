@@ -3,241 +3,136 @@ from datetime import datetime, date
 import calendar  # noqa: F401
 from app.extensions import db
 from app.models import (Consultant, AbsenceRequest, AbsenceRequestDay,
-                       AbsenceRequestType, AbsenceRequestStatus, MonthlyTimesheet, DailyTimesheetEntry, ActivityType)  # noqa: F401
+                       AbsenceRequestType, AbsenceRequestStatus, MonthlyTimesheet, DailyTimesheetEntry, ProjectAssignment, ActivityType)  # noqa: F401
 
 absence_requests_bp = Blueprint('absence_requests', __name__)
 
 @absence_requests_bp.route('/api/absence-requests', methods=['POST'])
-def create_absence_request():
-    """Create a new absence request with multiple days"""
-    data = request.get_json()
-    
-    required_fields = ['consultant_id', 'absence_type', 'days']
-    for field in required_fields:
-        if not data or field not in data:
-            return jsonify({'error': f'{field} is required'}), 400
-    
-    # Validate consultant exists
-    consultant = Consultant.query.get_or_404(data['consultant_id'])
-    
-    # Validate absence type
-    try:
-        absence_type = AbsenceRequestType(data['absence_type'])
-    except ValueError:
-        return jsonify({'error': 'Invalid absence type'}), 400
-    
-    # Validate days data
-    if not data['days'] or not isinstance(data['days'], list):
-        return jsonify({'error': 'days must be a non-empty list'}), 400
-    
-    # Parse and validate each day
-    parsed_days = []
-    for day_data in data['days']:
-        if not isinstance(day_data, dict) or 'date' not in day_data or 'time_fraction' not in day_data:
-            return jsonify({'error': 'Each day must have date and time_fraction'}), 400
-        
-        try:
-            absence_date = datetime.strptime(day_data['date'], '%Y-%m-%d').date()
-        except ValueError:
-            return jsonify({'error': 'Invalid date format. Use YYYY-MM-DD'}), 400
-        
-        time_fraction = day_data['time_fraction']
-        if time_fraction not in [0.5, 1.0]:
-            return jsonify({'error': 'time_fraction must be 0.5 or 1.0'}), 400
-        
-        parsed_days.append({
-            'date': absence_date,
-            'time_fraction': time_fraction
-        })
-    
-    # Check for conflicts with existing absence requests
-    existing_conflicts = []
-    for day in parsed_days:
-        # Check for existing absence requests on the same day
-        existing_absence = db.session.query(AbsenceRequestDay).join(AbsenceRequest).filter(
-            AbsenceRequest.consultant_id == data['consultant_id'],
-            AbsenceRequestDay.absence_date == day['date'],
-            AbsenceRequestDay.status.in_([AbsenceRequestStatus.PENDING, AbsenceRequestStatus.ACCEPTED])
+def create_absence_request(): 
+    """Create a new absence request with multiple days""" 
+    data = request.get_json() 
+     
+    required_fields = ['consultant_id', 'absence_type', 'days', 'activity_type'] 
+    for field in required_fields: 
+        if not data or field not in data: 
+            return jsonify({'error': f'{field} is required'}), 400 
+     
+    # Validate consultant exists 
+    consultant = Consultant.query.get_or_404(data['consultant_id']) 
+     
+    # Validate absence type 
+    try: 
+        absence_type = AbsenceRequestType(data['absence_type']) 
+    except ValueError: 
+        return jsonify({'error': 'Invalid absence type'}), 400 
+     
+    # Validate days data 
+    if not data['days'] or not isinstance(data['days'], list): 
+        return jsonify({'error': 'days must be a non-empty list'}), 400 
+     
+    # Parse and validate each day 
+    parsed_days = [] 
+    for day_data in data['days']: 
+        if not isinstance(day_data, dict) or 'date' not in day_data or 'number_of_hours' not in day_data: 
+            return jsonify({'error': 'Each day must have date and number_of_hours'}), 400 
+         
+        try: 
+            absence_date = datetime.strptime(day_data['date'], '%Y-%m-%d').date() 
+        except ValueError: 
+            return jsonify({'error': 'Invalid date format. Use YYYY-MM-DD'}), 400 
+         
+        number_of_hours = day_data['number_of_hours'] 
+        if number_of_hours > 8.0001: 
+            return jsonify({'error': 'number_of_hours must be under 8 hours'}), 400 
+         
+        parsed_days.append({ 
+            'date': absence_date, 
+            'number_of_hours': number_of_hours 
+        }) 
+     
+    # Check for conflicts with existing absence requests 
+    existing_conflicts = [] 
+    for day in parsed_days: 
+        existing_absence = db.session.query(AbsenceRequestDay).join(AbsenceRequest).filter( 
+            AbsenceRequest.consultant_id == data['consultant_id'], 
+            AbsenceRequestDay.absence_date == day['date'], 
+            AbsenceRequestDay.status.in_([AbsenceRequestStatus.PENDING, AbsenceRequestStatus.ACCEPTED, AbsenceRequestStatus.SAVED])
         ).first()
-        
+         
         if existing_absence:
             existing_conflicts.append(day['date'].isoformat())
-    
+     
     if existing_conflicts:
         return jsonify({
             'error': f'Consultant already has absence requests for these dates: {", ".join(existing_conflicts)}'
         }), 400
-    
-    # Check annual limit (excluding Congés Sans Solde)
-    if absence_type != AbsenceRequestType.CONGES_SANS_SOLDE:
-        current_year = datetime.now().year
-        total_days_requested = sum(day['time_fraction'] for day in parsed_days)
-        
-        # Get existing accepted/pending days for the year
-        existing_days = db.session.query(db.func.sum(AbsenceRequestDay.time_fraction)).join(AbsenceRequest).filter(
-            AbsenceRequest.consultant_id == data['consultant_id'],
-            AbsenceRequest.absence_type != AbsenceRequestType.CONGES_SANS_SOLDE,
-            AbsenceRequestDay.status.in_([AbsenceRequestStatus.ACCEPTED, AbsenceRequestStatus.PENDING]),
-            db.func.strftime('%Y', AbsenceRequestDay.absence_date) == str(current_year)
-        ).scalar() or 0
-        
-        total_remaining_days = max(0, 25 - existing_days)
-        
-        if existing_days + total_days_requested > 25:
-            return jsonify({
-                'error': f'Annual absence limit exceeded. Remaining days available: {total_remaining_days}. You are requesting: {total_days_requested} days'
-            }), 400
-    
-    # Create the absence request
+     
+    # Check annual limit (excluding Congés Sans Solde) 
+    if absence_type != AbsenceRequestType.CONGES_SANS_SOLDE: 
+        current_year = datetime.now().year 
+        total_hours_requested = sum(day['number_of_hours'] for day in parsed_days) 
+         
+        existing_hours = db.session.query(db.func.sum(AbsenceRequestDay.number_of_hours)).join(AbsenceRequest).filter( 
+            AbsenceRequest.consultant_id == data['consultant_id'], 
+            AbsenceRequest.absence_type != AbsenceRequestType.CONGES_SANS_SOLDE, 
+            AbsenceRequestDay.status.in_([AbsenceRequestStatus.ACCEPTED, AbsenceRequestStatus.PENDING, AbsenceRequestStatus.SAVED]), 
+            db.func.strftime('%Y', AbsenceRequestDay.absence_date) == str(current_year) 
+        ).scalar() or 0 
+         
+        total_remaining_hours = max(0, 25 * 8 - existing_hours) 
+         
+        if existing_hours + total_hours_requested > 25 * 8: 
+            return jsonify({ 
+                'error': f'Annual absence limit exceeded. Remaining hours available: {total_remaining_hours}. You are requesting: {total_hours_requested} hours' 
+            }), 400 
+     
+    # Validate activity type 
+    try: 
+        activity_type = ActivityType(data['activity_type']) 
+    except ValueError: 
+        return jsonify({'error': 'Invalid activity type'}), 400 
+ 
+    # Absence related to a specific mission 
+    assigned_project_id = None
+    if activity_type == ActivityType.PROJECT: 
+        if not data.get('mission_id'): 
+            return jsonify({'error': 'Mission Id is required!'}), 400 
+         
+        # Validate mission exists and consultant is assigned 
+        assignment = ProjectAssignment.query.get_or_404(data['mission_id']) 
+         
+        if assignment.consultant_id != data['consultant_id']: 
+            return jsonify({'error': 'Consultant is not assigned to this mission'}), 400
+         
+        assigned_project_id = assignment.id
+     
+    # Create the absence request 
     absence_request = AbsenceRequest(
         consultant_id=data['consultant_id'],
         absence_type=absence_type,
         commentary=data.get('commentary'),
-        justification=data.get('justification')
+        status=data.get('status', AbsenceRequestStatus.SAVED),
+        justification=data.get('justification'),
+        assigned_project_id=assigned_project_id
     )
-    
-    try:
+     
+    try: 
         db.session.add(absence_request)
         db.session.flush()  # Get the ID
-        
+         
         # Create absence days
         for day in parsed_days:
             absence_day = AbsenceRequestDay(
                 absence_request_id=absence_request.id,
+                consultant_id=data['consultant_id'],
+                status=data.get('status', AbsenceRequestStatus.SAVED),
                 absence_date=day['date'],
-                time_fraction=day['time_fraction']
+                number_of_hours=day['number_of_hours']
             )
             db.session.add(absence_day)
-        
+         
         db.session.commit()
-        
-        # Process timesheet updates for each absence day
-        affected_months = set()
-        
-        for day in parsed_days:
-            absence_date = day['date']
-            absence_time_fraction = day['time_fraction']
-            
-            # Get first and last day of the month containing this absence date
-            first_day = date(absence_date.year, absence_date.month, 1)
-            last_day = date(absence_date.year, absence_date.month, calendar.monthrange(absence_date.year, absence_date.month)[1])
-            
-            # Check if timesheet is submitted for this month and not validated
-            submitted_entries = DailyTimesheetEntry.query.filter(
-                DailyTimesheetEntry.consultant_id == data['consultant_id'],
-                DailyTimesheetEntry.work_date >= first_day,
-                DailyTimesheetEntry.work_date <= last_day,
-                DailyTimesheetEntry.status != 'validated'
-            ).first()
-            
-            if submitted_entries:
-                # Timesheet is submitted, need to update it
-                affected_months.add((absence_date.year, absence_date.month))
-                
-                # Get all timesheet entries for this specific date
-                daily_entries = DailyTimesheetEntry.query.filter(
-                    DailyTimesheetEntry.consultant_id == data['consultant_id'],
-                    DailyTimesheetEntry.work_date == absence_date,
-                    DailyTimesheetEntry.activity_type != ActivityType.ABSENCE
-                ).order_by(DailyTimesheetEntry.id).all()
-                
-                if daily_entries:
-                    if absence_time_fraction == 1.0:
-                        # Full day absence - remove all activities and replace with absence
-                        for entry in daily_entries:
-                            db.session.delete(entry)
-                        
-                        # Create new absence entry
-                        absence_entry = DailyTimesheetEntry(
-                            consultant_id=data['consultant_id'],
-                            work_date=absence_date,
-                            activity_type=ActivityType.ABSENCE,
-                            time_fraction=1.0,
-                            absence_type=absence_type,
-                            absence_request_id=absence_request.id,
-                            description=f"Absence: {absence_type.value}",
-                            status='pending'
-                        )
-                        db.session.add(absence_entry)
-                        
-                    elif absence_time_fraction == 0.5:
-                        # Half day absence
-                        total_existing_time = sum(entry.time_fraction for entry in daily_entries)
-                        
-                        if total_existing_time == 1.0:
-                            # User has full day activities, need to adjust
-                            if len(daily_entries) == 1:
-                                # Single activity of 1.0, convert to 0.5
-                                daily_entries[0].time_fraction = 0.5
-                            else:
-                                # Multiple activities, remove the last one and adjust if needed
-                                last_entry = daily_entries[-1]
-                                db.session.delete(last_entry)
-                                
-                                # Check if remaining activities sum to 0.5
-                                remaining_time = sum(entry.time_fraction for entry in daily_entries[:-1])
-                                if remaining_time > 0.5:
-                                    # Adjust the first entry to make room for absence
-                                    daily_entries[0].time_fraction = 0.5
-                                    # Remove other entries if necessary
-                                    for entry in daily_entries[1:-1]:
-                                        db.session.delete(entry)
-                        
-                        elif total_existing_time == 0.5:
-                            # Already half day, keep as is
-                            pass
-                        else:
-                            # Other cases, adjust first entry to 0.5 and remove others
-                            if daily_entries:
-                                daily_entries[0].time_fraction = 0.5
-                                for entry in daily_entries[1:]:
-                                    db.session.delete(entry)
-                        
-                        # Create absence entry
-                        absence_entry = DailyTimesheetEntry(
-                            consultant_id=data['consultant_id'],
-                            work_date=absence_date,
-                            activity_type=ActivityType.ABSENCE,
-                            time_fraction=0.5,
-                            absence_type=absence_type,
-                            absence_request_id=absence_request.id,
-                            description=f"Absence: {absence_type.value}",
-                            status='pending'
-                        )
-                        db.session.add(absence_entry)
-                else:
-                    # Day is empty but timesheet exists for the month
-                    # Create the absence entry directly
-                    absence_entry = DailyTimesheetEntry(
-                        consultant_id=absence_request.consultant_id,
-                        work_date=absence_date,
-                        activity_type=ActivityType.ABSENCE,
-                        time_fraction=absence_time_fraction,
-                        absence_type=absence_type,
-                        absence_request_id=absence_request.id,
-                        description=f"Absence: {absence_type.value}",
-                        status='pending'
-                    )
-                    db.session.add(absence_entry)
 
-        '''
-        # Update status of all records in affected months to 'pending'
-        for year, month in affected_months:
-            first_day = date(year, month, 1)
-            last_day = date(year, month, calendar.monthrange(year, month)[1])
-            
-            month_entries = DailyTimesheetEntry.query.filter(
-                DailyTimesheetEntry.consultant_id == data['consultant_id'],
-                DailyTimesheetEntry.work_date >= first_day,
-                DailyTimesheetEntry.work_date <= last_day
-            ).all()
-            
-            for entry in month_entries:
-                entry.status = 'pending'
-        '''
-
-        db.session.commit()
-        
         return jsonify({
             'id': absence_request.id,
             'request_reference': absence_request.request_reference,
@@ -245,13 +140,12 @@ def create_absence_request():
             'status': absence_request.status.value,
             'commentary': absence_request.commentary,
             'justification': absence_request.justification,
-            'total_days': sum(day['time_fraction'] for day in parsed_days),
+            'total_hours': sum(day['number_of_hours'] for day in parsed_days),
             'days': [{
                 'date': day['date'].isoformat(),
-                'time_fraction': day['time_fraction']
+                'number_of_hours': day['number_of_hours']
             } for day in parsed_days],
             'created_at': absence_request.created_at.isoformat(),
-            'affected_months': len(affected_months)
         }), 201
         
     except Exception as e:

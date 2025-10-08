@@ -28,6 +28,7 @@ class AbsenceRequestType(Enum):
     MATERNITE = "Maternité"
 
 class AbsenceRequestStatus(Enum):
+    SAVED = "saved"
     PENDING = "pending"
     ACCEPTED = "accepted"
     REFUSED = "refused"

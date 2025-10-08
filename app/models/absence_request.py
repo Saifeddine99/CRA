@@ -11,7 +11,7 @@ class AbsenceRequest(db.Model):
     absence_type = db.Column(db.Enum(AbsenceRequestType), nullable=False)
     commentary = db.Column(db.Text, nullable=True)
     justification = db.Column(db.Text, nullable=True)
-    status = db.Column(db.Enum(AbsenceRequestStatus), default=AbsenceRequestStatus.PENDING, nullable=False)
+    status = db.Column(db.Enum(AbsenceRequestStatus), default=AbsenceRequestStatus.SAVED, nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     reviewed_at = db.Column(db.DateTime, nullable=True)
@@ -35,7 +35,7 @@ class AbsenceRequestDay(db.Model):
     consultant_id = db.Column(db.Integer, db.ForeignKey('consultant.id'), nullable=False)
     absence_date = db.Column(db.Date, nullable=False)
     number_of_hours = db.Column(db.Float, nullable=False)  # Number of hours of the absence
-    status = db.Column(db.Enum(AbsenceRequestStatus), default=AbsenceRequestStatus.PENDING, nullable=False)
+    status = db.Column(db.Enum(AbsenceRequestStatus), default=AbsenceRequestStatus.SAVED, nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     
     # Unique constraint to prevent duplicate absence requests for the same day
