@@ -436,7 +436,7 @@ def analyze_affected_months(absence_request, old_days, new_days):
 
 @absence_requests_bp.route('/api/absence-requests/<int:request_id>', methods=['PUT'])
 def update_absence_request(request_id):
-    """Update an absence request (pending or refused or accepted). After update, status becomes pending."""
+    """Update an absence request (saved, pending, refused, or accepted). After update, status becomes saved."""
     data = request.get_json()
 
     if not data:
@@ -445,248 +445,152 @@ def update_absence_request(request_id):
     # Fetch request
     absence_request = AbsenceRequest.query.get_or_404(request_id)
 
-    # Only pending, refused, or accepted requests can be updated
-    #Accepted absence requests can only be updated by HR team
-    if absence_request.status not in [AbsenceRequestStatus.PENDING, AbsenceRequestStatus.REFUSED, AbsenceRequestStatus.ACCEPTED]:
-        return jsonify({'error': 'Only pending, refused, or accepted requests can be updated'}), 400
-    
+    # Only saved, pending, refused, or accepted requests can be updated
+    if absence_request.status not in [
+        AbsenceRequestStatus.SAVED,
+        AbsenceRequestStatus.PENDING,
+        AbsenceRequestStatus.REFUSED,
+        AbsenceRequestStatus.ACCEPTED
+    ]:
+        return jsonify({'error': 'Only saved, pending, refused, or accepted requests can be updated'}), 400
+
+    # If accepted, require HR authorization
     if absence_request.status == AbsenceRequestStatus.ACCEPTED:
-        # Check if "reviewed_by" is provided
         reviewed_by = data.get('reviewed_by', "")
         if reviewed_by != 'hr@company.com':
             return jsonify({'error': 'reviewed_by is required for accepted absence requests and must be hr@company.com'}), 400
-    
+
     # Optional fields
     new_commentary = data.get('commentary', absence_request.commentary)
     new_justification = data.get('justification', absence_request.justification)
 
-    # Absence type can be updated; default to current if not provided
+    # Absence type can be updated
     absence_type_value = data.get('absence_type', absence_request.absence_type.value)
     try:
         new_absence_type = AbsenceRequestType(absence_type_value)
     except ValueError:
         return jsonify({'error': 'Invalid absence type'}), 400
 
-    # Days can be updated by providing full replacement list under `days`
+    # 🟦 Activity type and mission verification
+    assigned_project_id = None
+    activity_type_str = data.get('activity_type')
+    if activity_type_str:
+        try:
+            activity_type = ActivityType(activity_type_str)
+        except ValueError:
+            return jsonify({'error': 'Invalid activity_type'}), 400
+
+        # If project activity — validate mission_id
+        if activity_type == ActivityType.PROJECT:
+            if not data.get('mission_id'):
+                return jsonify({'error': 'mission_id is required for project-related absence requests'}), 400
+
+            mission_id = data['mission_id']
+            assignment = ProjectAssignment.query.get(mission_id)
+            if not assignment:
+                return jsonify({'error': f'Mission with id {mission_id} not found'}), 404
+
+            if assignment.consultant_id != absence_request.consultant_id:
+                return jsonify({'error': f'Consultant is not assigned to mission {mission_id}'}), 400
+
+            assigned_project_id = mission_id
+        else:
+            assigned_project_id = None  # Not linked to a project
+
+    # Days can be updated by providing full replacement list
     days_payload = data.get('days')
     parsed_days = None
     if days_payload is not None:
         if not isinstance(days_payload, list) or len(days_payload) == 0:
             return jsonify({'error': 'days must be a non-empty list'}), 400
-        # Parse
+
         parsed_days = []
         for day_data in days_payload:
-            if not isinstance(day_data, dict) or 'date' not in day_data or 'time_fraction' not in day_data:
-                return jsonify({'error': 'Each day must have date and time_fraction'}), 400
+            if not isinstance(day_data, dict) or 'date' not in day_data or 'number_of_hours' not in day_data:
+                return jsonify({'error': 'Each day must have date and number_of_hours'}), 400
+
             try:
                 absence_date = datetime.strptime(day_data['date'], '%Y-%m-%d').date()
             except ValueError:
                 return jsonify({'error': 'Invalid date format. Use YYYY-MM-DD'}), 400
-            time_fraction = day_data['time_fraction']
-            if time_fraction not in [0.5, 1.0]:
-                return jsonify({'error': 'time_fraction must be 0.5 or 1.0'}), 400
-            parsed_days.append({'date': absence_date, 'time_fraction': time_fraction})
-        
-        # Extract old and new absence day info for analysis
-        old_days = [{'date': d.absence_date, 'time_fraction': d.time_fraction} for d in absence_request.absence_days]  # after commit, these are new
-        affected_months = analyze_affected_months(absence_request, old_days, parsed_days)
 
-        # 🚫 Prevent modifications on validated timesheets when the absence request is refused
-        if absence_request.status == AbsenceRequestStatus.REFUSED:
-            for m in affected_months:
-                if m['timesheet_status'] == 'validated' and m['absence_modified']:
-                    return jsonify({
-                        'error': f"Cannot modify absence request for {m['month']:02d}/{m['year']} "
-                                f"because the corresponding timesheet is already validated."
-                    }), 400
+            number_of_hours = day_data['number_of_hours']
+            if number_of_hours > 8:
+                return jsonify({'error': 'number_of_hours must be lower than 8 hours'}), 400
 
-        # Validate conflicts against other requests for the same consultant
+            parsed_days.append({'date': absence_date, 'number_of_hours': number_of_hours})
+
+        # Conflict validation
         existing_conflicts = []
         for day in parsed_days:
             conflict = db.session.query(AbsenceRequestDay).join(AbsenceRequest).filter(
                 AbsenceRequest.consultant_id == absence_request.consultant_id,
                 AbsenceRequestDay.absence_date == day['date'],
-                AbsenceRequestDay.status.in_([AbsenceRequestStatus.PENDING, AbsenceRequestStatus.ACCEPTED]),
+                AbsenceRequestDay.status.in_([
+                    AbsenceRequestStatus.PENDING,
+                    AbsenceRequestStatus.ACCEPTED
+                ]),
                 AbsenceRequestDay.absence_request_id != absence_request.id
             ).first()
             if conflict:
                 existing_conflicts.append(day['date'].isoformat())
+
         if existing_conflicts:
             return jsonify({'error': f'Consultant already has absence requests for these dates: {", ".join(existing_conflicts)}'}), 400
 
-        # Validate annual limit (excluding Congés Sans Solde)
+        # Annual limit check
         if new_absence_type != AbsenceRequestType.CONGES_SANS_SOLDE:
             current_year = datetime.now().year
-            total_days_requested = sum(day['time_fraction'] for day in parsed_days)
-            existing_days = db.session.query(db.func.sum(AbsenceRequestDay.time_fraction)).join(AbsenceRequest).filter(
+            total_hours_requested = sum(day['number_of_hours'] for day in parsed_days)
+            existing_hours = db.session.query(db.func.sum(AbsenceRequestDay.number_of_hours)).join(AbsenceRequest).filter(
                 AbsenceRequest.consultant_id == absence_request.consultant_id,
                 AbsenceRequest.absence_type != AbsenceRequestType.CONGES_SANS_SOLDE,
-                AbsenceRequestDay.status.in_([AbsenceRequestStatus.ACCEPTED, AbsenceRequestStatus.PENDING]),
+                AbsenceRequestDay.status.in_([
+                    AbsenceRequestStatus.ACCEPTED,
+                    AbsenceRequestStatus.PENDING
+                ]),
                 db.func.strftime('%Y', AbsenceRequestDay.absence_date) == str(current_year),
                 AbsenceRequestDay.absence_request_id != absence_request.id
             ).scalar() or 0
-            if existing_days + total_days_requested > 25:
-                remaining_days = max(0, 25 - existing_days)
-                return jsonify({'error': f'Annual absence limit exceeded. Remaining days available: {remaining_days}. You are requesting: {total_days_requested} days'}), 400
+
+            if existing_hours + total_hours_requested > 25 * 8:
+                remaining_hours = max(0, 25 * 8 - existing_hours)
+                return jsonify({
+                    'error': f'Annual absence limit exceeded. Remaining hours available: {remaining_hours}. You are requesting: {total_hours_requested} hours'
+                }), 400
 
     try:
-        # Apply simple field updates
+        # Apply updates
         absence_request.absence_type = new_absence_type
         absence_request.commentary = new_commentary
         absence_request.justification = new_justification
+        absence_request.assigned_project_id = assigned_project_id
 
-        # If days provided, replace existing days for this request
+        # Replace days if provided
         if parsed_days is not None:
-            # Delete existing days
             AbsenceRequestDay.query.filter_by(absence_request_id=absence_request.id).delete()
-            # Delete related timesheet entries
-            DailyTimesheetEntry.query.filter(
-                DailyTimesheetEntry.absence_request_id == absence_request.id,
-                DailyTimesheetEntry.status != 'validated'
-            ).delete()
-            # Insert new days
             for day in parsed_days:
                 db.session.add(AbsenceRequestDay(
                     absence_request_id=absence_request.id,
                     absence_date=day['date'],
-                    time_fraction=day['time_fraction']
+                    number_of_hours=day['number_of_hours']
                 ))
-            
-            # Process timesheet updates for each new absence day
-            #affected_months = set()
-            
-            for day in parsed_days:
-                absence_date = day['date']
-                absence_time_fraction = day['time_fraction']
-                # check if the month is in the affected months
-                
-                
-                # Get first and last day of the month containing this absence date
-                first_day = date(absence_date.year, absence_date.month, 1)
-                last_day = date(absence_date.year, absence_date.month, calendar.monthrange(absence_date.year, absence_date.month)[1])
-                
-                # Check if timesheet is submitted for this month and not validated
-                submitted_entries = DailyTimesheetEntry.query.filter(
-                    DailyTimesheetEntry.consultant_id == absence_request.consultant_id,
-                    DailyTimesheetEntry.work_date >= first_day,
-                    DailyTimesheetEntry.work_date <= last_day,
-                    DailyTimesheetEntry.status != 'validated'
-                ).first()
-                
-                if submitted_entries:
-                    # Timesheet is submitted, need to update it
-                    #affected_months.add((absence_date.year, absence_date.month))
-                    
-                    # Get all timesheet entries for this specific date
-                    daily_entries = DailyTimesheetEntry.query.filter(
-                        DailyTimesheetEntry.consultant_id == absence_request.consultant_id,
-                        DailyTimesheetEntry.work_date == absence_date,
-                        DailyTimesheetEntry.activity_type != ActivityType.ABSENCE
-                    ).order_by(DailyTimesheetEntry.id).all()
-                    
-                    if daily_entries:
-                        if absence_time_fraction == 1.0:
-                            # Full day absence - remove all activities and replace with absence
-                            for entry in daily_entries:
-                                db.session.delete(entry)
-                            
-                            # Create new absence entry
-                            absence_entry = DailyTimesheetEntry(
-                                consultant_id=absence_request.consultant_id,
-                                work_date=absence_date,
-                                activity_type=ActivityType.ABSENCE,
-                                time_fraction=1.0,
-                                absence_type=new_absence_type,
-                                absence_request_id=absence_request.id,
-                                description=f"Absence: {new_absence_type.value}",
-                                status='pending'
-                            )
-                            db.session.add(absence_entry)
-                            
-                        elif absence_time_fraction == 0.5:
-                            # Half day absence
-                            total_existing_time = sum(entry.time_fraction for entry in daily_entries)
-                            
-                            if total_existing_time == 1.0:
-                                # User has full day activities, need to adjust
-                                if len(daily_entries) == 1:
-                                    # Single activity of 1.0, convert to 0.5
-                                    daily_entries[0].time_fraction = 0.5
-                                else:
-                                    # Multiple activities, remove the last one and adjust if needed
-                                    last_entry = daily_entries[-1]
-                                    db.session.delete(last_entry)
-                                    
-                                    # Check if remaining activities sum to 0.5
-                                    remaining_time = sum(entry.time_fraction for entry in daily_entries[:-1])
-                                    if remaining_time > 0.5:
-                                        # Adjust the first entry to make room for absence
-                                        daily_entries[0].time_fraction = 0.5
-                                        # Remove other entries if necessary
-                                        for entry in daily_entries[1:-1]:
-                                            db.session.delete(entry)
-                            
-                            elif total_existing_time == 0.5:
-                                # Already half day, keep as is
-                                pass
-                            else:
-                                # Other cases, adjust first entry to 0.5 and remove others
-                                if daily_entries:
-                                    daily_entries[0].time_fraction = 0.5
-                                    for entry in daily_entries[1:]:
-                                        db.session.delete(entry)
-                            
-                            # Create absence entry
-                            absence_entry = DailyTimesheetEntry(
-                                consultant_id=absence_request.consultant_id,
-                                work_date=absence_date,
-                                activity_type=ActivityType.ABSENCE,
-                                time_fraction=0.5,
-                                absence_type=new_absence_type,
-                                absence_request_id=absence_request.id,
-                                description=f"Absence: {new_absence_type.value}",
-                                status='pending'
-                            )
-                            db.session.add(absence_entry)
-                    else:
-                        # Day is empty but timesheet exists for the month
-                        # Create the absence entry directly
-                        absence_entry = DailyTimesheetEntry(
-                            consultant_id=absence_request.consultant_id,
-                            work_date=absence_date,
-                            activity_type=ActivityType.ABSENCE,
-                            time_fraction=absence_time_fraction,
-                            absence_type=new_absence_type,
-                            absence_request_id=absence_request.id,
-                            description=f"Absence: {new_absence_type.value}",
-                            status='pending'
-                        )
-                        db.session.add(absence_entry)
 
-            '''
-            # Update status of all records in affected months to 'pending'
-            for year, month in affected_months:
-                first_day = date(year, month, 1)
-                last_day = date(year, month, calendar.monthrange(year, month)[1])
-                
-                month_entries = DailyTimesheetEntry.query.filter(
-                    DailyTimesheetEntry.consultant_id == absence_request.consultant_id,
-                    DailyTimesheetEntry.work_date >= first_day,
-                    DailyTimesheetEntry.work_date <= last_day
-                ).all()
-                
-                for entry in month_entries:
-                    entry.status = 'pending'
-            '''
-
-        # After updates, set overall status from payload or default to pending
-        new_status_value = data.get('status', AbsenceRequestStatus.PENDING.value)
+        # Status update (default Saved)
+        new_status_value = data.get('status', AbsenceRequestStatus.SAVED.value)
         try:
             new_status = AbsenceRequestStatus(new_status_value)
         except ValueError:
-            return jsonify({'error': "Invalid status. Allowed: 'pending', 'refused', or 'accepted'"}), 400
-        if new_status not in [AbsenceRequestStatus.PENDING, AbsenceRequestStatus.REFUSED, AbsenceRequestStatus.ACCEPTED]:
-            return jsonify({'error': "Status must be 'pending', 'refused', or 'accepted' for updates"}), 400
+            return jsonify({'error': "Invalid status. Allowed: saved, pending, refused, accepted"}), 400
+
+        if new_status not in [
+            AbsenceRequestStatus.SAVED,
+            AbsenceRequestStatus.PENDING,
+            AbsenceRequestStatus.REFUSED,
+            AbsenceRequestStatus.ACCEPTED
+        ]:
+            return jsonify({'error': "Status must be saved, pending, refused, or accepted for updates"}), 400
+
         absence_request.status = new_status
 
         db.session.commit()
@@ -697,16 +601,21 @@ def update_absence_request(request_id):
             'request_reference': absence_request.request_reference,
             'absence_type': absence_request.absence_type.value,
             'status': absence_request.status.value,
+            'assigned_project_id': absence_request.assigned_project_id,
             'commentary': absence_request.commentary,
             'justification': absence_request.justification,
-            'days': [{
-                'date': d.absence_date.isoformat(),
-                'time_fraction': d.time_fraction
-            } for d in absence_request.absence_days]
+            'days': [
+                {
+                    'date': d.absence_date.isoformat(),
+                    'number_of_hours': d.number_of_hours
+                } for d in absence_request.absence_days
+            ]
         })
-    except Exception:
+
+    except Exception as e:
         db.session.rollback()
-        return jsonify({'error': 'Failed to update absence request'}), 500
+        return jsonify({'error': f'Failed to update absence request: {str(e)}'}), 500
+
 
 @absence_requests_bp.route('/api/absence-requests/<int:request_id>/review', methods=['PUT'])
 def review_absence_request(request_id):
