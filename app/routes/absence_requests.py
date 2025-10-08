@@ -12,7 +12,7 @@ def create_absence_request():
     """Create a new absence request with multiple days""" 
     data = request.get_json() 
      
-    required_fields = ['consultant_id', 'absence_type', 'days', 'activity_type'] 
+    required_fields = ['consultant_id', 'absence_type', 'days', 'activity_type']
     for field in required_fields: 
         if not data or field not in data: 
             return jsonify({'error': f'{field} is required'}), 400 

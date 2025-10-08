@@ -3,12 +3,12 @@ from datetime import datetime, date
 import calendar
 from app.extensions import db
 from app.models import (Consultant, Project, ProjectAssignment, MonthlyTimesheet, DailyTimesheetEntry,
-                       ActivityType, InternalActivityType, AbsenceRequestType, ProjectActivityType, AbsenceRequestStatus, AbsenceRequestDay, AbsenceRequest)
+                       ActivityType, InternalActivityType, AbsenceRequestType, ProjectActivityType, AbsenceRequestStatus, AbsenceRequestDay, AbsenceRequest, TimesheetStatus)
 
 timesheet_bp = Blueprint('timesheet', __name__)
 
 # Load timesheet data (period, status, number of declared days, reviewed by, reviewed at, manager comments) for a given consultant
-@timesheet_bp.route('/api/consultants/<int:consultant_id>/timesheet', methods=['GET'])
+@timesheet_bp.route('/api/consultant/<int:consultant_id>/timesheets', methods=['GET'])
 def get_timesheets_per_consultant(consultant_id):
     """Get timesheet data for a given consultant"""
     consultant = Consultant.query.get_or_404(consultant_id)
@@ -46,12 +46,154 @@ def get_timesheets_per_consultant(consultant_id):
 
     return jsonify(result)
 
+@timesheet_bp.route('/api/timesheets', methods=['POST'])
+def create_timesheet():
+    """Create a new monthly timesheet with daily activity entries"""
+    data = request.get_json()
+
+    required_fields = ['consultant_id', 'work_dates', 'month', 'year']
+    for field in required_fields:
+        if not data or field not in data:
+            return jsonify({'error': f'{field} is required'}), 400
+
+    consultant_id = data['consultant_id']
+    month = data['month']
+    year = data['year']
+
+    # Validate month and year
+    if not (1 <= month <= 12):
+        return jsonify({'error': 'month must be between 1 and 12'}), 400
+    if year < 2000 or year > 2100:
+        return jsonify({'error': 'year must be reasonable'}), 400
+
+    # Check if a monthly timesheet already exists
+    existing = MonthlyTimesheet.query.filter_by(consultant_id=consultant_id, month=month, year=year).first()
+    if existing:
+        return jsonify({'error': 'Timesheet for this month already exists for this consultant'}), 400
+
+    # Validate work_dates
+    work_dates = data.get('work_dates')
+    if not isinstance(work_dates, dict):
+        return jsonify({'error': 'work_dates must be an object'}), 400
+
+    # Determine timesheet status
+    try:
+        status = TimesheetStatus(data.get('status', 'saved'))
+    except ValueError:
+        return jsonify({'error': 'Invalid status'}), 400
+
+    # Create monthly timesheet
+    monthly_timesheet = MonthlyTimesheet(
+        consultant_id=consultant_id,
+        month=month,
+        year=year,
+        description=data.get('description'),
+        status=status
+    )
+
+    db.session.add(monthly_timesheet)
+    db.session.flush()  # Get ID for foreign key
+
+    # Iterate through each date in work_dates
+    for date_str, activities in work_dates.items():
+        try:
+            work_date = datetime.strptime(date_str, '%Y-%m-%d').date()
+        except ValueError:
+            return jsonify({'error': f'Invalid date format for {date_str}. Use YYYY-MM-DD'}), 400
+
+        if not isinstance(activities, list) or not activities:
+            return jsonify({'error': f'Activities for {date_str} must be a non-empty list'}), 400
+
+        total_hours_day = 0
+        for activity in activities:
+            # Basic validation
+            if 'activity_type' not in activity or 'number_of_hours' not in activity:
+                return jsonify({'error': f'Missing required fields for {date_str}'}), 400
+
+            try:
+                activity_type = ActivityType(activity['activity_type'])
+            except ValueError:
+                return jsonify({'error': f'Invalid activity_type for {date_str}'}), 400
+
+            number_of_hours = activity['number_of_hours']
+            if not isinstance(number_of_hours, (int, float)) or number_of_hours <= 0 or number_of_hours > 24:
+                return jsonify({'error': f'Invalid number_of_hours for {date_str}'}), 400
+
+            total_hours_day += number_of_hours
+            # We must consider astreintes
+            if total_hours_day > 24:
+                return jsonify({'error': f'Total hours exceed 8 for {date_str}'}), 400
+
+            # Initialize optional fields
+            mission_id = None
+            mission_activity_type = None
+            internal_activity_type = None
+            absence_type = None
+
+            # PROJECT activities validation
+            if activity_type == ActivityType.PROJECT:
+                if not activity.get('mission_id'):
+                    return jsonify({'error': f'mission_id required for project activity on {date_str}'}), 400
+                mission_id = activity['mission_id']
+                assignment = ProjectAssignment.query.get(mission_id)
+                if not assignment:
+                    return jsonify({'error': f'Mission with id {mission_id} not found'}), 404
+                if assignment.consultant_id != consultant_id:
+                    return jsonify({'error': f'Consultant not assigned to mission {mission_id}'}), 400
+
+                try:
+                    mission_activity_type = ProjectActivityType(activity.get('mission_activity_type', 'Normale'))
+                except ValueError:
+                    return jsonify({'error': f'Invalid mission_activity_type for {date_str}'}), 400
+
+            # INTERNAL activities validation
+            elif activity_type == ActivityType.INTERNAL:
+                if not activity.get('internal_activity_type'):
+                    return jsonify({'error': f'internal_activity_type required for internal activity on {date_str}'}), 400
+                try:
+                    internal_activity_type = InternalActivityType(activity['internal_activity_type'])
+                except ValueError:
+                    return jsonify({'error': f'Invalid internal_activity_type for {date_str}'}), 400
+
+            # ABSENCE activities validation
+            elif activity_type == ActivityType.ABSENCE:
+                if not activity.get('absence_type'):
+                    return jsonify({'error': f'absence_type required for absence activity on {date_str}'}), 400
+                try:
+                    absence_type = AbsenceRequestType(activity['absence_type'])
+                except ValueError:
+                    return jsonify({'error': f'Invalid absence_type for {date_str}'}), 400
+
+            # Create daily entry
+            daily_entry = DailyTimesheetEntry(
+                monthly_timesheet_id=monthly_timesheet.id,
+                consultant_id=consultant_id,
+                work_date=work_date,
+                activity_type=activity_type,
+                number_of_hours=number_of_hours,
+                mission_id=mission_id,
+                mission_activity_type=mission_activity_type,
+                internal_activity_type=internal_activity_type,
+                absence_type=absence_type,
+                description=activity.get('description'),
+                status=status
+            )
+            db.session.add(daily_entry)
+
+    try:
+        db.session.commit()
+        return jsonify({'message': 'Timesheet created successfully', 'monthly_timesheet_id': monthly_timesheet.id}), 201
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 500
+
+
 @timesheet_bp.route('/api/timesheet-entries', methods=['POST'])
 def create_timesheet_entry():
     """Create a timesheet entry"""
     data = request.get_json()
     
-    required_fields = ['consultant_id', 'work_date', 'activity_type', 'time_fraction']
+    required_fields = ['consultant_id', 'days', 'month', 'year']
     for field in required_fields:
         if not data or field not in data:
             return jsonify({'error': f'{field} is required'}), 400
@@ -66,9 +208,9 @@ def create_timesheet_entry():
         return jsonify({'error': 'Invalid activity type'}), 400
     
     # Validate time fraction
-    time_fraction = data['time_fraction']
-    if not isinstance(time_fraction, (int, float)) or time_fraction <= 0 or time_fraction > 1:
-        return jsonify({'error': 'time_fraction must be between 0 and 1'}), 400
+    number_of_hours = data['number_of_hours']
+    if not isinstance(number_of_hours, (int, float)) or number_of_hours <= 0 or number_of_hours > 1:
+        return jsonify({'error': 'number_of_hours must be between 0 and 1'}), 400
     
     # Parse date
     try:
@@ -82,10 +224,10 @@ def create_timesheet_entry():
         work_date=work_date
     ).all()
     
-    current_total = sum(entry.time_fraction for entry in existing_entries)
-    if current_total + time_fraction > 1.0001:  # Small tolerance for floating point
+    current_total = sum(entry.number_of_hours for entry in existing_entries)
+    if current_total + number_of_hours > 1.0001:  # Small tolerance for floating point
         return jsonify({
-            'error': f'Daily time fraction limit exceeded. Current total: {current_total:.2f}, trying to add: {time_fraction:.2f}'
+            'error': f'Daily time fraction limit exceeded. Current total: {current_total:.2f}, trying to add: {number_of_hours:.2f}'
         }), 400
     
     # Validate activity-specific fields
@@ -93,7 +235,7 @@ def create_timesheet_entry():
         'consultant_id': data['consultant_id'],
         'work_date': work_date,
         'activity_type': activity_type,
-        'time_fraction': time_fraction,
+        'number_of_hours': number_of_hours,
         'description': data.get('description', '')
     }
     
@@ -157,7 +299,7 @@ def create_timesheet_entry():
             'id': entry.id,
             'work_date': entry.work_date.isoformat(),
             'activity_type': entry.activity_type.value,
-            'time_fraction': entry.time_fraction,
+            'number_of_hours': entry.number_of_hours,
             'description': entry.description,
             'status': entry.status
         }

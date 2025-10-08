@@ -51,11 +51,12 @@ class DailyTimesheetEntry(db.Model):
     # Foreign keys
     monthly_timesheet_id = db.Column(db.Integer, db.ForeignKey('monthly_timesheet.id'), nullable=False)
     consultant_id = db.Column(db.Integer, db.ForeignKey('consultant.id'), nullable=False)
-    project_id = db.Column(db.Integer, db.ForeignKey('project.id'), nullable=True)
+    
+    mission_id = db.Column(db.Integer, db.ForeignKey('ProjectAssignment.id'), nullable=True)
     absence_request_id = db.Column(db.Integer, db.ForeignKey('absence_request.id'), nullable=True)
 
     # Enums for specific contexts
-    project_activity_type = db.Column(db.Enum(ProjectActivityType), nullable=True)
+    mission_activity_type = db.Column(db.Enum(ProjectActivityType), nullable=True)
     internal_activity_type = db.Column(db.Enum(InternalActivityType), nullable=True)
     absence_type = db.Column(db.Enum(AbsenceRequestType), nullable=True)
 
