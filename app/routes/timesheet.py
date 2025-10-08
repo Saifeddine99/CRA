@@ -3,7 +3,7 @@ from datetime import datetime, date
 import calendar
 from app.extensions import db
 from app.models import (Consultant, Project, ProjectAssignment, MonthlyTimesheet, DailyTimesheetEntry,
-                       ActivityType, InternalActivityType, AbsenceRequestType, ProjectActivityType, AbsenceRequestStatus, AbsenceRequestDay, AbsenceRequest, TimesheetStatus)
+                       ActivityType, InternalActivityType, AbsenceRequestType, ProjectActivityType, AstreinteLocation, AstreinteType, AbsenceRequestStatus, AbsenceRequestDay, AbsenceRequest, TimesheetStatus)
 
 timesheet_bp = Blueprint('timesheet', __name__)
 
@@ -42,7 +42,6 @@ def get_timesheets_per_consultant(consultant_id):
         # get manager/ HR comments
         one_monthly_timesheet['manager_comments'] = monthly_timesheet.manager_comments
         result.append(one_monthly_timesheet)
-
 
     return jsonify(result)
 
@@ -120,15 +119,18 @@ def create_timesheet():
                 return jsonify({'error': f'Invalid number_of_hours for {date_str}'}), 400
 
             total_hours_day += number_of_hours
-            # We must consider astreintes
+            # We must consider astreintes (so 24h max)
             if total_hours_day > 24:
-                return jsonify({'error': f'Total hours exceed 8 for {date_str}'}), 400
+                return jsonify({'error': f'Total hours exceed 24 for {date_str}'}), 400
 
             # Initialize optional fields
             mission_id = None
             mission_activity_type = None
+            astreinte_location = None
+            astreinte_type = None
             internal_activity_type = None
             absence_type = None
+            absence_request_id = None
 
             # PROJECT activities validation
             if activity_type == ActivityType.PROJECT:
@@ -141,10 +143,27 @@ def create_timesheet():
                 if assignment.consultant_id != consultant_id:
                     return jsonify({'error': f'Consultant not assigned to mission {mission_id}'}), 400
 
+                # Project activity type
                 try:
                     mission_activity_type = ProjectActivityType(activity.get('mission_activity_type', 'Normale'))
                 except ValueError:
-                    return jsonify({'error': f'Invalid mission_activity_type for {date_str}'}), 400
+                    return jsonify({'error': f'Invalid mission_activity_type for {date_str}'}), 400                
+
+                if mission_activity_type == ProjectActivityType.ASTREINTE:
+                    if not activity.get('astreinte_location'):
+                        return jsonify({'error': f'astreinte_location is required for Astreinte on {date_str}'}), 400
+                    if not activity.get('astreinte_type'):
+                        return jsonify({'error': f'astreinte_type is required for Astreinte on {date_str}'}), 400
+
+                    try:
+                        astreinte_location = AstreinteLocation(activity['astreinte_location'])
+                    except ValueError:
+                        return jsonify({'error': f'Invalid astreinte_location for {date_str}. Must be one of {[l.value for l in AstreinteLocation]}'}), 400
+
+                    try:
+                        astreinte_type = AstreinteType(activity['astreinte_type'])
+                    except ValueError:
+                        return jsonify({'error': f'Invalid astreinte_type for {date_str}. Must be one of {[t.value for t in AstreinteType]}'}), 400
 
             # INTERNAL activities validation
             elif activity_type == ActivityType.INTERNAL:
@@ -157,12 +176,33 @@ def create_timesheet():
 
             # ABSENCE activities validation
             elif activity_type == ActivityType.ABSENCE:
+                # absence_type is required
                 if not activity.get('absence_type'):
                     return jsonify({'error': f'absence_type required for absence activity on {date_str}'}), 400
                 try:
                     absence_type = AbsenceRequestType(activity['absence_type'])
                 except ValueError:
                     return jsonify({'error': f'Invalid absence_type for {date_str}'}), 400
+
+                # absence_request_id is mandatory
+                if not activity.get('absence_request_id'):
+                    return jsonify({'error': f'absence_request_id required for absence activity on {date_str}'}), 400
+                absence_request_id = activity['absence_request_id']
+
+                absence_request = AbsenceRequest.query.get(absence_request_id)
+                if not absence_request:
+                    return jsonify({'error': f'Absence request with id {absence_request_id} not found'}), 404
+                if absence_request.consultant_id != consultant_id:
+                    return jsonify({'error': f'Absence request {absence_request_id} does not belong to consultant {consultant_id}'}), 400
+
+                # mission_id is optional for absence
+                if activity.get('mission_id'):
+                    mission_id = activity['mission_id']
+                    assignment = ProjectAssignment.query.get(mission_id)
+                    if not assignment:
+                        return jsonify({'error': f'Mission with id {mission_id} not found'}), 404
+                    if assignment.consultant_id != consultant_id:
+                        return jsonify({'error': f'Consultant not assigned to mission {mission_id}'}), 400
 
             # Create daily entry
             daily_entry = DailyTimesheetEntry(
@@ -175,6 +215,9 @@ def create_timesheet():
                 mission_activity_type=mission_activity_type,
                 internal_activity_type=internal_activity_type,
                 absence_type=absence_type,
+                absence_request_id=absence_request_id,
+                astreinte_location=astreinte_location,
+                astreinte_type=astreinte_type,
                 description=activity.get('description'),
                 status=status
             )
@@ -406,6 +449,7 @@ def get_monthly_timesheet(consultant_id, year, month):
         }
     })
 
+'''
 @timesheet_bp.route('/api/consultants/<int:consultant_id>/timesheet/<int:year>/<int:month>/summary', methods=['GET'])
 def get_monthly_summary(consultant_id, year, month):
     """Get monthly summary grouped by projects and activity types"""
@@ -514,6 +558,7 @@ def get_monthly_summary(consultant_id, year, month):
             'total_absence_time': sum(a['total_time'] for a in absence_summary.values())
         }
     })
+'''
 
 @timesheet_bp.route('/api/timesheets/<int:year>/<int:month>', methods=['GET'])
 def get_all_timesheets(year, month):
