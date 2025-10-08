@@ -626,137 +626,71 @@ def get_all_timesheets(year, month):
         'timesheets': result
     })
 
-@timesheet_bp.route('/api/consultants/<int:consultant_id>/timesheet/<int:year>/<int:month>', methods=['DELETE'])
-def delete_monthly_timesheet(consultant_id, year, month):
-    """Delete all timesheet entries for a consultant in a given month if all are deletable.
-    Deletion allowed only when each entry status is 'pending' or 'refused'.
-    """
-    # Validate month and year
-    if not (1 <= month <= 12) or year < 2020 or year > 2030:
-        return jsonify({'error': 'Invalid month or year'}), 400
-    
-    first_day = date(year, month, 1)
-    last_day = date(year, month, calendar.monthrange(year, month)[1])
-    
-    entries = DailyTimesheetEntry.query.filter(
-        DailyTimesheetEntry.consultant_id == consultant_id,
-        DailyTimesheetEntry.work_date >= first_day,
-        DailyTimesheetEntry.work_date <= last_day
-    ).all()
-    
-    if not entries:
-        return jsonify({'error': 'No timesheet entries found for this period'}), 404
-    
-    allowed_statuses = {'pending', 'refused', 'validated'}
-    non_deletable = [
-        {
-            'id': e.id,
-            'work_date': e.work_date.isoformat(),
-            'status': e.status
-        }
-        for e in entries if e.status not in allowed_statuses
-    ]
-    
-    if non_deletable:
-        return jsonify({
-            'error': 'Deletion not allowed: some entries are not pending or refused or validated',
-            'non_deletable_entries': non_deletable
-        }), 400
-    
+@timesheet_bp.route('/api/timesheets/<int:monthly_timesheet_id>', methods=['DELETE'])
+def delete_timesheet(monthly_timesheet_id):
+    """Delete a monthly timesheet and all its related daily entries"""
     try:
-        for e in entries:
-            db.session.delete(e)
+        # Find the monthly timesheet
+        monthly_timesheet = MonthlyTimesheet.query.get(monthly_timesheet_id)
+        if not monthly_timesheet:
+            return jsonify({'error': f'Monthly timesheet with id {monthly_timesheet_id} not found'}), 404
+
+        # Deletion automatically cascades to DailyTimesheetEntry because of:
+        # daily_entries = db.relationship(..., cascade='all, delete-orphan')
+        db.session.delete(monthly_timesheet)
         db.session.commit()
+
         return jsonify({
-            'consultant_id': consultant_id,
-            'year': year,
-            'month': month,
-            'deleted_count': len(entries)
+            'message': 'Monthly timesheet and related daily entries deleted successfully',
+            'monthly_timesheet_id': monthly_timesheet_id
         }), 200
-    except Exception:
+
+    except Exception as e:
         db.session.rollback()
-        return jsonify({'error': 'Failed to delete timesheet entries'}), 500
+        return jsonify({'error': str(e)}), 500
 
-@timesheet_bp.route('/api/consultants/<int:consultant_id>/timesheet/<int:year>/<int:month>/status', methods=['POST'])
-def set_monthly_timesheet_status(consultant_id, year, month):
-    """HR validation endpoint: set status of all entries in a month to 'validated' or 'refused'."""
+@timesheet_bp.route('/api/timesheets/status', methods=['PUT'])
+def update_timesheet_status():
+    """Update the status of a monthly timesheet and all related daily entries"""
+    data = request.get_json()
 
-    # Validate month and year
-    if not (1 <= month <= 12) or year < 2020 or year > 2030:
-        return jsonify({'error': 'Invalid month or year'}), 400
+    # Validate required fields
+    if not data or 'monthly_timesheet_id' not in data or 'status' not in data:
+        return jsonify({'error': 'monthly_timesheet_id and status are required'}), 400
 
-    payload = request.get_json(silent=True) or {}
-    status = payload.get('status')
-    if status not in {'validated', 'refused'}:
-        return jsonify({'error': "status must be one of: 'validated', 'refused'"}), 400
+    monthly_timesheet_id = data['monthly_timesheet_id']
+    new_status_str = data['status']
 
-    first_day = date(year, month, 1)
-    last_day = date(year, month, calendar.monthrange(year, month)[1])
-
-    # ✅ Correct join using relationship attribute
-    pending_absences = AbsenceRequestDay.query.join(AbsenceRequestDay.absence_request).filter(
-        AbsenceRequestDay.absence_date >= first_day,
-        AbsenceRequestDay.absence_date <= last_day,
-        AbsenceRequestDay.status == AbsenceRequestStatus.PENDING,
-        AbsenceRequest.consultant_id == consultant_id
-    ).count()
-
-    if pending_absences > 0:
-        return jsonify({
-            'error': 'There are pending absence requests for this period. '
-                     'All absence requests must be reviewed before updating the timesheet status.',
-            'pending_absences_count': pending_absences
-        }), 400
-
-    # Fetch timesheet entries
-    entries = DailyTimesheetEntry.query.filter(
-        DailyTimesheetEntry.consultant_id == consultant_id,
-        DailyTimesheetEntry.work_date >= first_day,
-        DailyTimesheetEntry.work_date <= last_day
-    ).all()
-
-    if not entries:
-        return jsonify({'error': 'No timesheet entries found for this period'}), 404
-
+    # Validate new status
     try:
-        updated_count = 0
-        for e in entries:
-            if e.status != status:
-                e.status = status
-                updated_count += 1
-        db.session.commit()
-        return jsonify({
-            'consultant_id': consultant_id,
-            'year': year,
-            'month': month,
-            'new_status': status,
-            'affected_count': len(entries),
-            'updated_count': updated_count
-        }), 200
-    except Exception:
-        db.session.rollback()
-        return jsonify({'error': 'Failed to update timesheet status'}), 500
-
-@timesheet_bp.route('/api/consultants/<int:consultant_id>/daily-validation/<work_date>', methods=['GET'])
-def validate_daily_time(consultant_id, work_date):
-    """Check current time allocation for a specific day"""
-    try:
-        parsed_date = datetime.strptime(work_date, '%Y-%m-%d').date()
+        new_status = TimesheetStatus(new_status_str)
     except ValueError:
-        return jsonify({'error': 'Invalid date format. Use YYYY-MM-DD'}), 400
-    
-    entries = DailyTimesheetEntry.query.filter_by(
-        consultant_id=consultant_id,
-        work_date=parsed_date
-    ).all()
-    
-    total_time = sum(entry.time_fraction for entry in entries)
-    remaining_time = 1.0 - total_time
-    
-    return jsonify({
-        'work_date': work_date,
-        'total_allocated_time': total_time,
-        'remaining_time': max(0, remaining_time),
-        'is_complete': abs(total_time - 1.0) < 0.001,
-        'entries_count': len(entries)
-    })
+        return jsonify({'error': f'Invalid status "{new_status_str}". Must be one of: {[s.value for s in TimesheetStatus]}'}), 400
+
+    # Check if the monthly timesheet exists
+    monthly_timesheet = MonthlyTimesheet.query.get(monthly_timesheet_id)
+    if not monthly_timesheet:
+        return jsonify({'error': f'Monthly timesheet with id {monthly_timesheet_id} not found'}), 404
+
+    try:
+        # Update monthly timesheet status
+        monthly_timesheet.status = new_status
+        monthly_timesheet.updated_at = datetime.utcnow()
+
+        # Update all related daily entries
+        DailyTimesheetEntry.query.filter_by(monthly_timesheet_id=monthly_timesheet_id).update({
+            'status': new_status,
+            'updated_at': datetime.utcnow()
+        })
+
+        db.session.commit()
+
+        return jsonify({
+            'message': 'Timesheet status updated successfully',
+            'monthly_timesheet_id': monthly_timesheet_id,
+            'new_status': new_status.value
+        }), 200
+
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 500
