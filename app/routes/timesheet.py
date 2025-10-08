@@ -7,6 +7,45 @@ from app.models import (Consultant, Project, ProjectAssignment, MonthlyTimesheet
 
 timesheet_bp = Blueprint('timesheet', __name__)
 
+# Load timesheet data (period, status, number of declared days, reviewed by, reviewed at, manager comments) for a given consultant
+@timesheet_bp.route('/api/consultants/<int:consultant_id>/timesheet', methods=['GET'])
+def get_timesheets_per_consultant(consultant_id):
+    """Get timesheet data for a given consultant"""
+    consultant = Consultant.query.get_or_404(consultant_id)
+    result = []
+
+    monthly_timesheets = consultant.monthly_timesheets
+
+    for monthly_timesheet in monthly_timesheets:
+
+        one_monthly_timesheet = {}
+
+        # get timesheet Id
+        one_monthly_timesheet['monthly_timesheet_id'] = monthly_timesheet.id
+
+        # get period
+        one_monthly_timesheet['period'] = {
+            'year': monthly_timesheet.year,
+            'month_name': calendar.month_name[monthly_timesheet.month]
+        }
+        # get status
+        one_monthly_timesheet['status'] = monthly_timesheet.status
+
+        # get number of declared days (set allowing to not repeat the same day twice)
+        one_monthly_timesheet['number_of_declared_days'] = len(set(entry.work_date for entry in monthly_timesheet.daily_entries))
+
+        # get reviewer
+        one_monthly_timesheet['reviewed_by'] = monthly_timesheet.reviewed_by
+
+        # get review date
+        one_monthly_timesheet['reviewed_at'] = monthly_timesheet.reviewed_at
+        # get manager/ HR comments
+        one_monthly_timesheet['manager_comments'] = monthly_timesheet.manager_comments
+        result.append(one_monthly_timesheet)
+
+
+    return jsonify(result)
+
 @timesheet_bp.route('/api/timesheet-entries', methods=['POST'])
 def create_timesheet_entry():
     """Create a timesheet entry"""

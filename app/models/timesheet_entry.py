@@ -41,7 +41,7 @@ class DailyTimesheetEntry(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     work_date = db.Column(db.Date, nullable=False)
     activity_type = db.Column(db.Enum(ActivityType), nullable=False)
-    time_fraction = db.Column(db.Float, nullable=False)  # Must be between 0 and 1
+    number_of_hours = db.Column(db.Float, nullable=False)  # Number of hours worked
     description = db.Column(db.Text)
     status = db.Column(db.Enum(TimesheetStatus), default=TimesheetStatus.SAVED, nullable=False)
     
