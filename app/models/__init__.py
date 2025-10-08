@@ -1,5 +1,5 @@
 from .enums import (ActivityType, InternalActivityType, ProjectActivityType,
-                   AbsenceRequestType, AbsenceRequestStatus, TimesheetStatus)
+                   AbsenceRequestType, AbsenceRequestStatus, TimesheetStatus, AstreinteLocation, AstreinteType)
 from .consultant import Consultant
 from .project import Project
 from .project_assignment import ProjectAssignment
@@ -10,5 +10,5 @@ __all__ = [
     'ActivityType', 'InternalActivityType', 'ProjectActivityType',
     'AbsenceRequestType', 'AbsenceRequestStatus', 'TimesheetStatus',
     'Consultant', 'Project', 'ProjectAssignment', 'MonthlyTimesheet', 'DailyTimesheetEntry',
-    'AbsenceRequest', 'AbsenceRequestDay'
+    'AbsenceRequest', 'AbsenceRequestDay', 'AstreinteLocation', 'AstreinteType'
 ]
