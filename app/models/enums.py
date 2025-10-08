@@ -13,10 +13,15 @@ class InternalActivityType(Enum):
 
 class ProjectActivityType(Enum):
     NORMALE = "Normale"
-    ASTREINTE_CALENDAIRE_SEMAINE = "Astreinte Calendaire Semaine"
-    ASTREINTE_CALENDAIRE_SAMEDI = "Astreinte Calendaire Samedi"
-    ASTREINTE_CALENDAIRE_DIMANCHE = "Astreinte Calendaire Dimanche"
-    ASTREINTE_CALENDAIRE_JOURS_FERIES = "Astreinte Calendaire Jours Fériés"
+    ASTREINTE = "Astreinte"
+
+class AstreinteLocation(Enum):
+    REMOTE = "Remote"
+    ONSITE = "On_site"
+
+class AstreinteType(Enum):
+    PASSIVE = "Passive"
+    ACTIVE = "Active"
 
 class AbsenceRequestType(Enum):
     CP = "CP"
