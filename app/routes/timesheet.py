@@ -366,6 +366,113 @@ def create_timesheet_entry():
         db.session.rollback()
         return jsonify({'error': 'Failed to create timesheet entry'}), 500
 
+
+@timesheet_bp.route('/api/timesheets/<int:timesheet_id>', methods=['GET'])
+def get_monthly_timesheet_by_id(timesheet_id):
+    """Retrieve full details of a monthly timesheet, grouped by mission, internal activity, and absences"""
+    
+    # Fetch monthly timesheet
+    monthly_timesheet = MonthlyTimesheet.query.get(timesheet_id)
+    if not monthly_timesheet:
+        return jsonify({'error': f'Monthly timesheet with id {timesheet_id} not found'}), 404
+
+    # Fetch all related daily entries
+    daily_entries = DailyTimesheetEntry.query.filter_by(monthly_timesheet_id=timesheet_id).all()
+
+    # Initialize response structure
+    response = {
+        "missions": {},
+        "internal_activities": {},
+        "Absences": {}
+    }
+
+    # Process each daily entry
+    for entry in daily_entries:
+        work_date = entry.work_date.isoformat()
+        hours = entry.number_of_hours
+
+        # 1️⃣ PROJECT ACTIVITIES (must have mission_id)
+        if entry.activity_type == ActivityType.PROJECT:
+            if not entry.mission_id:
+                # Skip invalid project entries without mission_id
+                continue
+
+            mission_id = entry.mission_id
+
+            # Ensure mission key exists
+            if mission_id not in response["missions"]:
+                response["missions"][mission_id] = {
+                    "normal_activity": [],
+                    "astreinte": [],
+                    "absence": []
+                }
+
+            # Astreinte logic
+            if entry.mission_activity_type == ProjectActivityType.ASTREINTE:
+                response["missions"][mission_id]["astreinte"].append({
+                    "work_date": work_date,
+                    "number_of_hours": hours,
+                    "astreinte_location": entry.astreinte_location.value if entry.astreinte_location else None,
+                    "astreinte_type": entry.astreinte_type.value if entry.astreinte_type else None
+                })
+
+            # Normal project work
+            else:
+                response["missions"][mission_id]["normal_activity"].append({
+                    "work_date": work_date,
+                    "number_of_hours": hours
+                })
+
+        # 2️⃣ INTERNAL ACTIVITIES
+        elif entry.activity_type == ActivityType.INTERNAL:
+            if not entry.internal_activity_type:
+                continue
+            activity_type = entry.internal_activity_type.value
+            if activity_type not in response["internal_activities"]:
+                response["internal_activities"][activity_type] = []
+            response["internal_activities"][activity_type].append({
+                "work_date": work_date,
+                "number_of_hours": hours
+            })
+
+        # 3️⃣ ABSENCES (can be mission-related or internal)
+        elif entry.activity_type == ActivityType.ABSENCE:
+            if not entry.absence_type:
+                continue
+            absence_type = entry.absence_type.value
+
+            # Absence linked to a mission
+            if entry.mission_id:
+                mission_id = entry.mission_id
+                if mission_id not in response["missions"]:
+                    response["missions"][mission_id] = {
+                        "normal_activity": [],
+                        "astreinte": [],
+                        "absence": []
+                    }
+
+                response["missions"][mission_id]["absence"].append({
+                    "work_date": work_date,
+                    "number_of_hours": hours,
+                    "absence_type": absence_type,
+                    "absence_request_id": entry.absence_request_id
+                })
+
+            # Internal absence (not linked to mission)
+            else:
+                if absence_type not in response["Absences"]:
+                    response["Absences"][absence_type] = {
+                        "absence_request_id": entry.absence_request_id,
+                        "dates": []
+                    }
+
+                response["Absences"][absence_type]["dates"].append({
+                    "work_date": work_date,
+                    "number_of_hours": hours
+                })
+
+    return jsonify(response), 200
+
 @timesheet_bp.route('/api/consultants/<int:consultant_id>/timesheet/<int:year>/<int:month>', methods=['GET'])
 def get_monthly_timesheet(consultant_id, year, month):
     """Get monthly timesheet for a consultant"""
