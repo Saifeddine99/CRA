@@ -17,33 +17,47 @@ def get_timesheets_per_consultant(consultant_id):
     monthly_timesheets = consultant.monthly_timesheets
 
     for monthly_timesheet in monthly_timesheets:
-
         one_monthly_timesheet = {}
 
-        # get timesheet Id
+        # Basic info
         one_monthly_timesheet['monthly_timesheet_id'] = monthly_timesheet.id
-
-        # get period
         one_monthly_timesheet['period'] = {
             'year': monthly_timesheet.year,
             'month_name': calendar.month_name[monthly_timesheet.month]
         }
-        # get status
-        one_monthly_timesheet['status'] = monthly_timesheet.status
-
-        # get number of declared days (set allowing to not repeat the same day twice)
+        one_monthly_timesheet['status'] = monthly_timesheet.status.value if monthly_timesheet.status else None
         one_monthly_timesheet['number_of_declared_days'] = len(set(entry.work_date for entry in monthly_timesheet.daily_entries))
-
-        # get reviewer
         one_monthly_timesheet['reviewed_by'] = monthly_timesheet.reviewed_by
-
-        # get review date
         one_monthly_timesheet['reviewed_at'] = monthly_timesheet.reviewed_at
-        # get manager/ HR comments
         one_monthly_timesheet['manager_comments'] = monthly_timesheet.manager_comments
+
+        # ---- Calculate repartition ----
+        total_hours = 0.0
+        absence_hours = 0.0
+
+        for entry in monthly_timesheet.daily_entries:
+            # Skip astreinte from total hours
+            if (
+                entry.activity_type == ActivityType.PROJECT and
+                entry.mission_activity_type == ProjectActivityType.ASTREINTE
+            ):
+                continue
+
+            # Count toward total hours
+            total_hours += entry.number_of_hours or 0.0
+
+            # Count absence hours
+            if entry.activity_type == ActivityType.ABSENCE:
+                absence_hours += entry.number_of_hours or 0.0
+
+        # Compute repartition %
+        repartition = (absence_hours / total_hours * 100) if total_hours > 0 else 0.0
+        one_monthly_timesheet['repartition'] = round(repartition, 1)  # e.g. 23.4
+
         result.append(one_monthly_timesheet)
 
     return jsonify(result)
+
 
 @timesheet_bp.route('/api/timesheets', methods=['POST'])
 def create_timesheet():

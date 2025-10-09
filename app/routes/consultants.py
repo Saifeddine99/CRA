@@ -57,11 +57,14 @@ def get_consultant_projects(consultant_id):
     ).all()
     
     return jsonify([{
-        'assignment_id': assignment.id,
-        'project_id': project.id,
+        'mission_id': assignment.id,
         'project_name': project.name,
         'client_company': project.client_company,
         'consultant_position': assignment.position,
         'represented_by': project.represented_by,
-        'supervisor_email': project.supervisor_email
+        'supervisor_email': project.supervisor_email,
+        'assigned_at': assignment.assigned_at,
+        'mission_start_date': assignment.starts_at,
+        'mission_end_date': assignment.ends_at,
+        'is_active': assignment.is_active
     } for assignment, project in assignments])
