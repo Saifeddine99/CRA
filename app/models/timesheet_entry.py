@@ -54,7 +54,7 @@ class DailyTimesheetEntry(db.Model):
     monthly_timesheet_id = db.Column(db.Integer, db.ForeignKey('monthly_timesheet.id'), nullable=False)
     consultant_id = db.Column(db.Integer, db.ForeignKey('consultant.id'), nullable=False)
 
-    mission_id = db.Column(db.Integer, db.ForeignKey('ProjectAssignment.id'), nullable=True)
+    mission_id = db.Column(db.Integer, db.ForeignKey('project_assignment.id'), nullable=True)
     absence_request_id = db.Column(db.Integer, db.ForeignKey('absence_request.id'), nullable=True)
 
     # Enums for specific contexts

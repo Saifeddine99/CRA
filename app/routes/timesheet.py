@@ -230,7 +230,7 @@ def create_timesheet():
         db.session.rollback()
         return jsonify({'error': str(e)}), 500
 
-
+'''
 @timesheet_bp.route('/api/timesheet-entries', methods=['POST'])
 def create_timesheet_entry():
     """Create a timesheet entry"""
@@ -365,6 +365,7 @@ def create_timesheet_entry():
     except Exception as e:
         db.session.rollback()
         return jsonify({'error': 'Failed to create timesheet entry'}), 500
+'''
 
 
 @timesheet_bp.route('/api/timesheets/<int:timesheet_id>', methods=['GET'])
@@ -473,6 +474,7 @@ def get_monthly_timesheet_by_id(timesheet_id):
 
     return jsonify(response), 200
 
+'''
 @timesheet_bp.route('/api/consultants/<int:consultant_id>/timesheet/<int:year>/<int:month>', methods=['GET'])
 def get_monthly_timesheet(consultant_id, year, month):
     """Get monthly timesheet for a consultant"""
@@ -556,6 +558,7 @@ def get_monthly_timesheet(consultant_id, year, month):
         }
     })
 
+'''
 '''
 @timesheet_bp.route('/api/consultants/<int:consultant_id>/timesheet/<int:year>/<int:month>/summary', methods=['GET'])
 def get_monthly_summary(consultant_id, year, month):
@@ -666,7 +669,7 @@ def get_monthly_summary(consultant_id, year, month):
         }
     })
 '''
-
+'''
 @timesheet_bp.route('/api/timesheets/<int:year>/<int:month>', methods=['GET'])
 def get_all_timesheets(year, month):
     """Get all consultants' timesheets for a specific month (for HR portal)"""
@@ -777,6 +780,7 @@ def get_all_timesheets(year, month):
         'total_consultants': len(result),
         'timesheets': result
     })
+'''
 
 @timesheet_bp.route('/api/timesheets/<int:monthly_timesheet_id>', methods=['DELETE'])
 def delete_timesheet(monthly_timesheet_id):

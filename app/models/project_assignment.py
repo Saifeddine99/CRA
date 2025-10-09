@@ -14,3 +14,5 @@ class ProjectAssignment(db.Model):
     
     # Unique constraint to prevent duplicate assignments
     __table_args__ = (db.UniqueConstraint('consultant_id', 'project_id', name='unique_assignment'),)
+
+    daily_timesheet_entries = db.relationship('DailyTimesheetEntry', backref='project_assignment', lazy=True)
