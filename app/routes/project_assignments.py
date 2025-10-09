@@ -5,6 +5,39 @@ from app.models import Consultant, Project, ProjectAssignment
 
 project_assignments_bp = Blueprint('project_assignments', __name__)
 
+@project_assignments_bp.route('/api/project-assignments', methods=['GET'])
+def get_project_assignments():
+    """Get all project assignments with optional filtering by consultant_id or project_id"""
+    consultant_id = request.args.get('consultant_id', type=int)
+    project_id = request.args.get('project_id', type=int)
+    
+    # Build query based on filters
+    query = ProjectAssignment.query
+    
+    if consultant_id:
+        query = query.filter_by(consultant_id=consultant_id)
+    
+    if project_id:
+        query = query.filter_by(project_id=project_id)
+    
+    assignments = query.all()
+    
+    return jsonify([{
+        'id': assignment.id,
+        'consultant_id': assignment.consultant_id,
+        'consultant_name': assignment.consultant.name,
+        'consultant_email': assignment.consultant.email,
+        'project_id': assignment.project_id,
+        'project_name': assignment.project.name,
+        'client_company': assignment.project.client_company,
+        'position': assignment.position,
+        'is_active': assignment.is_active,
+        'assigned_at': assignment.assigned_at.isoformat(),
+        'starts_at': assignment.starts_at.isoformat(),
+        'ends_at': assignment.ends_at.isoformat()
+    } for assignment in assignments]), 200
+
+
 @project_assignments_bp.route('/api/project-assignments', methods=['POST'])
 def assign_consultant_to_project():
     """Assign a consultant to a project"""
@@ -27,11 +60,11 @@ def assign_consultant_to_project():
         return jsonify({'error': 'Invalid date format. Use YYYY-MM-DD'}), 400
 
     # Check if starts_at is after project starts_at
-    if starts_at < project.starts_at:
+    if starts_at < project.starts_at.date():
         return jsonify({'error': 'Start date cannot be before project start date'}), 400
 
     # Check if ends_at is before project ends_at
-    if ends_at > project.ends_at:
+    if ends_at > project.ends_at.date():
         return jsonify({'error': 'End date cannot be after project end date'}), 400
     
     # Check if assignment already exists
@@ -63,9 +96,12 @@ def assign_consultant_to_project():
         db.session.commit()
         return jsonify({
             'id': assignment.id,
+            'consultant_id': assignment.consultant_id,
             'consultant_name': consultant.name,
+            'project_id': assignment.project_id,
             'project_name': project.name,
             'position': assignment.position,
+            'is_active': assignment.is_active,
             'assigned_at': assignment.assigned_at.isoformat(),
             'starts_at': assignment.starts_at.isoformat(),
             'ends_at': assignment.ends_at.isoformat()
