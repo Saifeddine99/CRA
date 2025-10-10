@@ -569,10 +569,13 @@ def update_absence_request(request_id):
 
         # Replace days if provided
         if parsed_days is not None:
+            # Delete all daily absence request records
             AbsenceRequestDay.query.filter_by(absence_request_id=absence_request.id).delete()
+            
             for day in parsed_days:
                 db.session.add(AbsenceRequestDay(
                     absence_request_id=absence_request.id,
+                    consultant_id=absence_request.consultant_id,
                     absence_date=day['date'],
                     number_of_hours=day['number_of_hours']
                 ))
@@ -615,6 +618,7 @@ def update_absence_request(request_id):
 
     except Exception as e:
         db.session.rollback()
+        print(f"Error message: {str(e)}")
         return jsonify({'error': f'Failed to update absence request: {str(e)}'}), 500
 
 
