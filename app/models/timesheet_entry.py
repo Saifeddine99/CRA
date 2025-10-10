@@ -66,7 +66,9 @@ class DailyTimesheetEntry(db.Model):
     astreinte_location = db.Column(db.Enum(AstreinteLocation), nullable=True)
     astreinte_type = db.Column(db.Enum(AstreinteType), nullable=True)
 
+    '''
     # Unique constraint to prevent duplicate entries per date per consultant
     __table_args__ = (
         db.UniqueConstraint('consultant_id', 'work_date', name='unique_daily_timesheet_entry'),
     )
+    '''
