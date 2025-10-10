@@ -8,17 +8,17 @@ from app.models import (Consultant, AbsenceRequest, AbsenceRequestDay,
 absence_requests_bp = Blueprint('absence_requests', __name__)
 
 @absence_requests_bp.route('/api/absence-requests', methods=['POST'])
-def create_absence_request(): 
+def create_absence_request():
     """Create a new absence request with multiple days""" 
-    data = request.get_json() 
+    data = request.get_json()
      
     required_fields = ['consultant_id', 'absence_type', 'days', 'activity_type']
-    for field in required_fields: 
-        if not data or field not in data: 
-            return jsonify({'error': f'{field} is required'}), 400 
+    for field in required_fields:
+        if not data or field not in data:
+            return jsonify({'error': f'{field} is required'}), 400
      
     # Validate consultant exists 
-    consultant = Consultant.query.get_or_404(data['consultant_id']) 
+    consultant = Consultant.query.get_or_404(data['consultant_id'])
      
     # Validate absence type 
     try: 
@@ -116,7 +116,7 @@ def create_absence_request():
         assigned_project_id=assigned_project_id
     )
      
-    try: 
+    try:
         db.session.add(absence_request)
         db.session.flush()  # Get the ID
          
@@ -151,7 +151,7 @@ def create_absence_request():
     except Exception as e:
         db.session.rollback()
         return jsonify({'error': 'Failed to create absence request'}), 500
-
+'''
 @absence_requests_bp.route('/api/consultants/<int:consultant_id>/absence-summary/<int:year>', methods=['GET'])
 def get_absence_summary(consultant_id, year):
     """Get consultant's absence summary for a specific year"""
@@ -433,6 +433,7 @@ def analyze_affected_months(absence_request, old_days, new_days):
         })
 
     return results
+'''
 
 @absence_requests_bp.route('/api/absence-requests/<int:request_id>', methods=['PUT'])
 def update_absence_request(request_id):
@@ -821,42 +822,17 @@ def delete_absence_request(request_id):
     """Delete an absence request only if it's pending. Related timesheet entries and child days are removed via cascade delete-orphan."""
     absence_request = AbsenceRequest.query.get_or_404(request_id)
 
-    if absence_request.status not in [AbsenceRequestStatus.PENDING, AbsenceRequestStatus.REFUSED]:
-        return jsonify({'error': 'Only pending or refused requests can be deleted'}), 400
+    if absence_request.status not in [AbsenceRequestStatus.SAVED, AbsenceRequestStatus.PENDING, AbsenceRequestStatus.REFUSED]:
+        return jsonify({'error': 'Only saved, pending or refused requests can be deleted'}), 400
 
     try:
-        # Extract all dates from the absence request to determine affected months
-        affected_months = set()
-        consultant_id = absence_request.consultant_id
-        
-        for absence_day in absence_request.absence_days:
-            absence_date = absence_day.absence_date
-            affected_months.add((absence_date.year, absence_date.month))
-
-        
         # Delete the absence request (this will cascade delete related timesheet entries and absence days)
         db.session.delete(absence_request)
-
-        # Update status of all remaining timesheet entries in affected months to 'pending'
-        for year, month in affected_months:
-            first_day = date(year, month, 1)
-            last_day = date(year, month, calendar.monthrange(year, month)[1])
-            
-            month_entries = DailyTimesheetEntry.query.filter(
-                DailyTimesheetEntry.consultant_id == consultant_id,
-                DailyTimesheetEntry.work_date >= first_day,
-                DailyTimesheetEntry.work_date <= last_day
-            ).all()
-            
-            for entry in month_entries:
-                entry.status = 'pending'
-        
         db.session.commit()
         
         return jsonify({
             'message': 'Absence request deleted successfully',
-            'id': request_id,
-            'affected_months': len(affected_months)
+            'id': request_id
         }), 200
         
     except Exception:
