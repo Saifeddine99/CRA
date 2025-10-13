@@ -565,10 +565,11 @@ def get_monthly_timesheets():
     if year < 2000 or year > 2100:
         return jsonify({'error': 'Year must be between 2000 and 2100'}), 400
     
-    # Query timesheets for the specified month/year
-    timesheets = MonthlyTimesheet.query.filter_by(
-        month=month,
-        year=year,
+    # Query timesheets for the specified month/year, excluding 'saved' status
+    timesheets = MonthlyTimesheet.query.filter(
+        MonthlyTimesheet.month == month,
+        MonthlyTimesheet.year == year,
+        MonthlyTimesheet.status != TimesheetStatus.SAVED
     ).all()
     
     return jsonify([{

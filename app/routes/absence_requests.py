@@ -850,8 +850,16 @@ def delete_absence_request(request_id):
     """Delete an absence request only if it's pending. Related timesheet entries and child days are removed via cascade delete-orphan."""
     absence_request = AbsenceRequest.query.get_or_404(request_id)
 
-    if absence_request.status not in [AbsenceRequestStatus.SAVED, AbsenceRequestStatus.PENDING, AbsenceRequestStatus.REFUSED]:
+    data = request.get_json(silent=True) or {}
+
+    if absence_request.status not in [AbsenceRequestStatus.SAVED, AbsenceRequestStatus.PENDING, AbsenceRequestStatus.REFUSED, AbsenceRequestStatus.ACCEPTED]:
         return jsonify({'error': 'Only saved, pending or refused requests can be deleted'}), 400
+    
+    # If accepted, require HR authorization
+    if absence_request.status == AbsenceRequestStatus.ACCEPTED:
+        reviewed_by = data.get('reviewed_by', "")
+        if reviewed_by != 'hr@company.com':
+            return jsonify({'error': 'reviewed_by is required for accepted absence requests and must be hr@company.com'}), 400
 
     try:
         # Delete the absence request (this will cascade delete related timesheet entries and absence days)
