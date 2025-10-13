@@ -56,21 +56,32 @@ def create_absence_request():
             'number_of_hours': number_of_hours 
         }) 
      
-    # Check for conflicts with existing absence requests 
-    existing_conflicts = [] 
-    for day in parsed_days: 
-        existing_absence = db.session.query(AbsenceRequestDay).join(AbsenceRequest).filter( 
-            AbsenceRequest.consultant_id == data['consultant_id'], 
-            AbsenceRequestDay.absence_date == day['date'], 
+    # Check for conflicts with existing absence requests (total hours per day must not exceed 8)
+    daily_conflicts = []
+    for day in parsed_days:
+        # Get total hours already requested for this day
+        existing_hours = db.session.query(db.func.sum(AbsenceRequestDay.number_of_hours)).join(AbsenceRequest).filter(
+            AbsenceRequest.consultant_id == data['consultant_id'],
+            AbsenceRequestDay.absence_date == day['date'],
             AbsenceRequestDay.status.in_([AbsenceRequestStatus.PENDING, AbsenceRequestStatus.ACCEPTED, AbsenceRequestStatus.SAVED])
-        ).first()
-         
-        if existing_absence:
-            existing_conflicts.append(day['date'].isoformat())
-     
-    if existing_conflicts:
+        ).scalar() or 0
+        
+        # Check if adding new hours would exceed 8 hours
+        if existing_hours + day['number_of_hours'] > 8.0001:  # Small tolerance for floating point
+            daily_conflicts.append({
+                'date': day['date'].isoformat(),
+                'existing_hours': existing_hours,
+                'requested_hours': day['number_of_hours'],
+                'total': existing_hours + day['number_of_hours']
+            })
+
+    if daily_conflicts:
+        conflict_details = ', '.join([
+            f"{c['date']} (existing: {c['existing_hours']}h, requesting: {c['requested_hours']}h, total: {c['total']}h)"
+            for c in daily_conflicts
+        ])
         return jsonify({
-            'error': f'Consultant already has absence requests for these dates: {", ".join(existing_conflicts)}'
+            'error': f'Daily absence limit exceeded (max 8 hours per day). Conflicts: {conflict_details}'
         }), 400
      
     # Check annual limit (excluding Congés Sans Solde) 
@@ -543,24 +554,38 @@ def update_absence_request(request_id):
 
             parsed_days.append({'date': absence_date, 'number_of_hours': number_of_hours})
 
-        # Conflict validation
-        existing_conflicts = []
+        # Conflict validation (total hours per day must not exceed 8)
+        daily_conflicts = []
         for day in parsed_days:
-            conflict = db.session.query(AbsenceRequestDay).join(AbsenceRequest).filter(
+            # Get total hours already requested for this day (excluding current request)
+            existing_hours = db.session.query(db.func.sum(AbsenceRequestDay.number_of_hours)).join(AbsenceRequest).filter(
                 AbsenceRequest.consultant_id == absence_request.consultant_id,
                 AbsenceRequestDay.absence_date == day['date'],
                 AbsenceRequestDay.status.in_([
                     AbsenceRequestStatus.PENDING,
-                    AbsenceRequestStatus.ACCEPTED
+                    AbsenceRequestStatus.ACCEPTED,
+                    AbsenceRequestStatus.SAVED
                 ]),
                 AbsenceRequestDay.absence_request_id != absence_request.id
-            ).first()
-            if conflict:
-                existing_conflicts.append(day['date'].isoformat())
+            ).scalar() or 0
+            
+            # Check if adding new hours would exceed 8 hours
+            if existing_hours + day['number_of_hours'] > 8.0001:  # Small tolerance for floating point
+                daily_conflicts.append({
+                    'date': day['date'].isoformat(),
+                    'existing_hours': existing_hours,
+                    'requested_hours': day['number_of_hours'],
+                    'total': existing_hours + day['number_of_hours']
+                })
 
-        if existing_conflicts:
-            return jsonify({'error': f'Consultant already has absence requests for these dates: {", ".join(existing_conflicts)}'}), 400
-
+        if daily_conflicts:
+            conflict_details = ', '.join([
+                f"{c['date']} (existing: {c['existing_hours']}h, requesting: {c['requested_hours']}h, total: {c['total']}h)"
+                for c in daily_conflicts
+            ])
+            return jsonify({
+                'error': f'Daily absence limit exceeded (max 8 hours per day). Conflicts: {conflict_details}'
+            }), 400
         # Annual limit check
         if new_absence_type != AbsenceRequestType.CONGES_SANS_SOLDE:
             current_year = datetime.now().year
