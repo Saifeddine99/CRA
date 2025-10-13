@@ -1,4 +1,5 @@
 from flask import Flask, jsonify
+from flask_migrate import Migrate
 from config import config
 from app.extensions import db, cors
 
@@ -13,6 +14,7 @@ def create_app(config_name='default'):
     # Initialize extensions
     db.init_app(app)
     cors.init_app(app)  # Allow all domains for all routes
+    migrate = Migrate(app, db)
     
     # Import models to ensure they're registered with SQLAlchemy
     from app.models import (

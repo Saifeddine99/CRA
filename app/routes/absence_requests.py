@@ -17,14 +17,20 @@ def create_absence_request():
         if not data or field not in data:
             return jsonify({'error': f'{field} is required'}), 400
      
-    # Validate consultant exists 
+    # Validate consultant exists
     consultant = Consultant.query.get_or_404(data['consultant_id'])
      
-    # Validate absence type 
-    try: 
-        absence_type = AbsenceRequestType(data['absence_type']) 
+    # Validate absence type
+    try:
+        absence_type = AbsenceRequestType(data['absence_type'])
     except ValueError: 
-        return jsonify({'error': 'Invalid absence type'}), 400 
+        return jsonify({'error': 'Invalid absence type'}), 400
+
+    # Validate activity type 
+    try: 
+        activity_type = ActivityType(data['activity_type']) 
+    except ValueError: 
+        return jsonify({'error': 'Invalid activity type'}), 400
      
     # Validate days data 
     if not data['days'] or not isinstance(data['days'], list): 
@@ -79,19 +85,14 @@ def create_absence_request():
             db.func.strftime('%Y', AbsenceRequestDay.absence_date) == str(current_year) 
         ).scalar() or 0 
          
-        total_remaining_hours = max(0, 25 * 8 - existing_hours) 
+        total_remaining_hours = max(0, 25 * 8 - existing_hours)
          
-        if existing_hours + total_hours_requested > 25 * 8: 
-            return jsonify({ 
+        if existing_hours + total_hours_requested > 25 * 8:
+            return jsonify({
                 'error': f'Annual absence limit exceeded. Remaining hours available: {total_remaining_hours}. You are requesting: {total_hours_requested} hours' 
-            }), 400 
+            }), 400
      
-    # Validate activity type 
-    try: 
-        activity_type = ActivityType(data['activity_type']) 
-    except ValueError: 
-        return jsonify({'error': 'Invalid activity type'}), 400 
- 
+
     # Absence related to a specific mission 
     assigned_project_id = None
     if activity_type == ActivityType.PROJECT: 
@@ -106,12 +107,28 @@ def create_absence_request():
          
         assigned_project_id = assignment.id
      
-    # Create the absence request 
+    # Status config (default Saved)
+    status_value = data.get('status', AbsenceRequestStatus.SAVED.value)
+    try:
+        status = AbsenceRequestStatus(status_value)
+    except ValueError:
+        return jsonify({'error': "Invalid status. Allowed: saved, pending, refused, accepted"}), 400
+
+    if status not in [
+        AbsenceRequestStatus.SAVED,
+        AbsenceRequestStatus.PENDING,
+        AbsenceRequestStatus.REFUSED,
+        AbsenceRequestStatus.ACCEPTED
+    ]:
+        return jsonify({'error': "Status must be saved, pending, refused, or accepted for updates"}), 400
+
+
+    # Create the absence request
     absence_request = AbsenceRequest(
         consultant_id=data['consultant_id'],
         absence_type=absence_type,
         commentary=data.get('commentary'),
-        status=data.get('status', AbsenceRequestStatus.SAVED),
+        status=status,
         justification=data.get('justification'),
         assigned_project_id=assigned_project_id
     )
@@ -125,7 +142,7 @@ def create_absence_request():
             absence_day = AbsenceRequestDay(
                 absence_request_id=absence_request.id,
                 consultant_id=data['consultant_id'],
-                status=data.get('status', AbsenceRequestStatus.SAVED),
+                status=status,
                 absence_date=day['date'],
                 number_of_hours=day['number_of_hours']
             )
@@ -149,6 +166,7 @@ def create_absence_request():
         }), 201
         
     except Exception as e:
+        print(f"error: {str(e)}")
         db.session.rollback()
         return jsonify({'error': 'Failed to create absence request'}), 500
 '''
@@ -437,7 +455,7 @@ def analyze_affected_months(absence_request, old_days, new_days):
 
 @absence_requests_bp.route('/api/absence-requests/<int:request_id>', methods=['PUT'])
 def update_absence_request(request_id):
-    """Update an absence request (saved, pending, refused, or accepted). After update, status becomes saved."""
+    """Update an absence request (saved, pending, refused, or accepted)"""
     data = request.get_json()
 
     if not data:
@@ -455,11 +473,13 @@ def update_absence_request(request_id):
     ]:
         return jsonify({'error': 'Only saved, pending, refused, or accepted requests can be updated'}), 400
 
+    '''
     # If accepted, require HR authorization
     if absence_request.status == AbsenceRequestStatus.ACCEPTED:
         reviewed_by = data.get('reviewed_by', "")
         if reviewed_by != 'hr@company.com':
             return jsonify({'error': 'reviewed_by is required for accepted absence requests and must be hr@company.com'}), 400
+    '''
 
     # Optional fields
     new_commentary = data.get('commentary', absence_request.commentary)
@@ -472,6 +492,7 @@ def update_absence_request(request_id):
     except ValueError:
         return jsonify({'error': 'Invalid absence type'}), 400
 
+    '''
     # 🟦 Activity type and mission verification
     assigned_project_id = None
     activity_type_str = data.get('activity_type')
@@ -497,6 +518,7 @@ def update_absence_request(request_id):
             assigned_project_id = mission_id
         else:
             assigned_project_id = None  # Not linked to a project
+    '''
 
     # Days can be updated by providing full replacement list
     days_payload = data.get('days')
@@ -565,20 +587,7 @@ def update_absence_request(request_id):
         absence_request.absence_type = new_absence_type
         absence_request.commentary = new_commentary
         absence_request.justification = new_justification
-        absence_request.assigned_project_id = assigned_project_id
-
-        # Replace days if provided
-        if parsed_days is not None:
-            # Delete all daily absence request records
-            AbsenceRequestDay.query.filter_by(absence_request_id=absence_request.id).delete()
-            
-            for day in parsed_days:
-                db.session.add(AbsenceRequestDay(
-                    absence_request_id=absence_request.id,
-                    consultant_id=absence_request.consultant_id,
-                    absence_date=day['date'],
-                    number_of_hours=day['number_of_hours']
-                ))
+        #absence_request.assigned_project_id = assigned_project_id
 
         # Status update (default Saved)
         new_status_value = data.get('status', AbsenceRequestStatus.SAVED.value)
@@ -596,6 +605,20 @@ def update_absence_request(request_id):
             return jsonify({'error': "Status must be saved, pending, refused, or accepted for updates"}), 400
 
         absence_request.status = new_status
+
+        # Replace days if provided
+        if parsed_days is not None:
+            # Delete all daily absence request records
+            AbsenceRequestDay.query.filter_by(absence_request_id=absence_request.id).delete()
+            
+            for day in parsed_days:
+                db.session.add(AbsenceRequestDay(
+                    absence_request_id=absence_request.id,
+                    consultant_id=absence_request.consultant_id,
+                    absence_date=day['date'],
+                    number_of_hours=day['number_of_hours'],
+                    status=new_status
+                ))
 
         db.session.commit()
 
@@ -621,7 +644,7 @@ def update_absence_request(request_id):
         print(f"Error message: {str(e)}")
         return jsonify({'error': f'Failed to update absence request: {str(e)}'}), 500
 
-
+'''
 @absence_requests_bp.route('/api/absence-requests/<int:request_id>/review', methods=['PUT'])
 def review_absence_request(request_id):
     """HR team review absence request (accept/refuse individual days)"""
@@ -820,6 +843,7 @@ def review_absence_request(request_id):
     except Exception as e:
         db.session.rollback()
         return jsonify({'error': 'Failed to review absence request'}), 500
+'''
 
 @absence_requests_bp.route('/api/absence-requests/<int:request_id>', methods=['DELETE'])
 def delete_absence_request(request_id):

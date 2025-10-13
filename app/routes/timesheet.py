@@ -52,7 +52,7 @@ def get_timesheets_per_consultant(consultant_id):
 
         # Compute repartition %
         repartition = (absence_hours / total_hours * 100) if total_hours > 0 else 0.0
-        one_monthly_timesheet['repartition'] = round(repartition, 1)  # e.g. 23.4
+        one_monthly_timesheet['repartition'] = round(100 - repartition, 1)  # e.g. 23.4
 
         result.append(one_monthly_timesheet)
 
@@ -683,6 +683,48 @@ def get_monthly_summary(consultant_id, year, month):
         }
     })
 '''
+
+@timesheet_bp.route('/api/timesheets/monthly', methods=['GET'])
+def get_monthly_timesheets():
+    """Get all consultants' timesheets for a specific month/year (for HR portal)"""
+    month = request.args.get('month', type=int)
+    year = request.args.get('year', type=int)
+    
+    # Validate required parameters
+    if not month or not year:
+        return jsonify({'error': 'Both month and year parameters are required'}), 400
+    
+    # Validate month range
+    if month < 1 or month > 12:
+        return jsonify({'error': 'Month must be between 1 and 12'}), 400
+    
+    # Validate year range (reasonable bounds)
+    if year < 2000 or year > 2100:
+        return jsonify({'error': 'Year must be between 2000 and 2100'}), 400
+    
+    # Query timesheets for the specified month/year
+    timesheets = MonthlyTimesheet.query.filter_by(
+        month=month,
+        year=year,
+    ).all()
+    
+    return jsonify([{
+        'id': timesheet.id,
+        'timesheet_reference': timesheet.timesheet_reference,
+        'consultant_id': timesheet.consultant_id,
+        'consultant_name': timesheet.consultant.name,
+        'consultant_email': timesheet.consultant.email,
+        'month': timesheet.month,
+        'year': timesheet.year,
+        'description': timesheet.description,
+        'status': timesheet.status.value,
+        'created_at': timesheet.created_at.isoformat(),
+        'updated_at': timesheet.updated_at.isoformat(),
+        'reviewed_at': timesheet.reviewed_at.isoformat() if timesheet.reviewed_at else None,
+        'reviewed_by': timesheet.reviewed_by,
+        'manager_comments': timesheet.manager_comments
+    } for timesheet in timesheets]), 200
+
 '''
 @timesheet_bp.route('/api/timesheets/<int:year>/<int:month>', methods=['GET'])
 def get_all_timesheets(year, month):
