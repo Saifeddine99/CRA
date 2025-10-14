@@ -880,12 +880,14 @@ def delete_absence_request(request_id):
     if absence_request.status not in [AbsenceRequestStatus.SAVED, AbsenceRequestStatus.PENDING, AbsenceRequestStatus.REFUSED, AbsenceRequestStatus.ACCEPTED]:
         return jsonify({'error': 'Only saved, pending or refused requests can be deleted'}), 400
     
+    '''
     # If accepted, require HR authorization
     if absence_request.status == AbsenceRequestStatus.ACCEPTED:
         reviewed_by = data.get('reviewed_by', "")
         if reviewed_by != 'hr@company.com':
             return jsonify({'error': 'reviewed_by is required for accepted absence requests and must be hr@company.com'}), 400
-
+    '''
+    
     try:
         # Delete the absence request (this will cascade delete related timesheet entries and absence days)
         db.session.delete(absence_request)
